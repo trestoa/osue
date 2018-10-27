@@ -1,3 +1,14 @@
+/**
+ * @file main.c
+ * @author Markus Klein (e11707252@student.tuwien.ac.at)
+ * @brief Main module for exercise a1
+ * @version 1.0
+ * @date 2018-10-27
+ * 
+ * @details This program implements a variant of the unix command line tool "diff" 
+ * called "mydiff" as specified in the exercise description.
+ */
+
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -5,15 +16,77 @@
 #include <string.h>
 #include <ctype.h>
 
-// TODO doxygen
-static char *progname;
+static char *progname; /**< Program name. Name of the executable used for usage and error messages. */
 
-static void usage(void);
-static FILE* openf_checked(char *path, char *mode);
+/**
+ * Print usage. 
+ * @brief Prints synopsis of the mydiff program.
+ * 
+ * @details Prints the usage message of the programm mydiff on sterr and terminates 
+ * the program with EXIT_FAILURE.
+ * Global variables: progname.
+ */
+static void usage(void); 
+
+/**
+ * Wrapper of fopen with error handling.
+ * @brief fopen with error handling.
+ * 
+ * @param path Path to the file that should be opened.
+ * @param mode Mode option passed to fopen.
+ * @return FILE* FILE object returned by fopen.
+ * 
+ * @details Tries to open and return the given file. Prints an error message to stderr and
+ * terminates the program with EXIT_FAILURE if an error occures.
+ * Global variables: progname.
+ */
+static FILE* fopen_checked(char *path, char *mode);
+
+/**
+ * fclose with error handling.
+ * @brief Wrapper of fclose with error handling.
+ * 
+ * @param f FILE object that should be close.
+ * 
+ * @details Tries to close the given file. Prints an error message to stderr and
+ * terminates the program with EXIT_FAILURE if an error occures.
+ * Global variables: progname.
+ */
 static void fclose_checked(FILE *f);
 
+/**
+ * Implementation of the diff algorithm for mydiff.
+ * @brief Compares two files line by line and prints the number of 
+ * different charakters to an output stream.
+ * 
+ * @param file1 FILE object of first file used for the comparision.
+ * @param file2 FILE object of second file used for the comparision.
+ * @param out FILE object where the differences will be written to.
+ * @param ignore_case When 1, the comparison is case insensitive.
+ * 
+ * @details Reads the files file1 and file2 line by line and compares each line character
+ * by character. The number of different characters per line (if > 0) are are 
+ * written to the given out stream. File comparision stops when one of the 
+ * files streams reaches EOF; line comparison stop when one of the lines reaches 
+ * the line end. 
+ * Global variables: progname.
+ */
 void diff(FILE *file1, FILE *file2, FILE *out, int ignore_case);
 
+/**
+ * Main method for the mydiff program.
+ * @brief Program entry point. Parses the command line arguments, opens 
+ * the file streams and calls the diff function.
+ * 
+ * @param argc Argument counter.
+ * @param argv Argument vector.
+ * @return int Program exit code (EXIT_SUCCESS)
+ * 
+ * @details Reads the command line arguments via getopt and checks for the correct 
+ * number of arguments. Subsequently opens the two input file and the output file 
+ * (defaults to stdout) and calls the main diff algorithm implemented of the diff function.
+ * Global variables: progname.
+ */
 int main(int argc, char **argv) {
     progname = argv[0];
     int ignore_case = 0;
@@ -42,12 +115,12 @@ int main(int argc, char **argv) {
 
     FILE *outfile, *file1, *file2;
     if(outfile_path != NULL) {
-        outfile = openf_checked(outfile_path, "w");
+        outfile = fopen_checked(outfile_path, "w");
     } else {
         outfile = stdout;
     }
-    file1 = openf_checked(argv[0], "r");
-    file2 = openf_checked(argv[1], "r");
+    file1 = fopen_checked(argv[0], "r");
+    file2 = fopen_checked(argv[1], "r");
     
     diff(file1, file2, outfile, ignore_case);
     
@@ -56,7 +129,7 @@ int main(int argc, char **argv) {
     if(outfile_path != NULL) {
         fclose_checked(outfile);
     }
-    exit(EXIT_SUCCESS);
+    return EXIT_SUCCESS;
 }
 
 void diff(FILE *file1, FILE *file2, FILE *out, int ignore_case) {
@@ -113,7 +186,7 @@ static void usage(void) {
     exit(EXIT_FAILURE);
 }
 
-static FILE* openf_checked(char *path, char *mode) {
+static FILE* fopen_checked(char *path, char *mode) {
     FILE *f = fopen(path, mode);
     if(f == NULL) {
         fprintf(stderr, "[%s] fopen on %s failed: %s\n", progname, path, strerror(errno));
