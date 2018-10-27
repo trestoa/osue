@@ -157,7 +157,7 @@ void diff(FILE *file1, FILE *file2, FILE *out, int ignore_case) {
             exit(EXIT_FAILURE);
         }
 
-        // Check for linelen1-1 and linelen2-1 here as the returned char* contations the delimiter character
+        // Check for linelen1-1 and linelen2-1 here as the returned char* contains the delimiter character
         for(linepos = 0; linepos < linelen1-1 && linepos < linelen2-1; linepos++) {
             char c1 = line1[linepos], c2 = line2[linepos];
             if(ignore_case == 1) {
