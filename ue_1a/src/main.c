@@ -92,6 +92,7 @@ int main(int argc, char **argv) {
     int ignore_case = 0;
     char* outfile_path = NULL;
 
+    // Parse cli arguments
     int c;
     while((c = getopt(argc, argv, "io:")) != -1) {
         switch(c) {
@@ -113,6 +114,7 @@ int main(int argc, char **argv) {
         usage();
     }
 
+    // Open input/output files and call main algorithm
     FILE *outfile, *file1, *file2;
     if(outfile_path != NULL) {
         outfile = fopen_checked(outfile_path, "w");
