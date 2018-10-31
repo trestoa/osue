@@ -30,7 +30,7 @@ char *progname;
  * @details File where file differences are written to. Defined here as module wide
  * variable so that cleanup_exit can access it during program shutdown.
  */
-static FILE *outfile = NULL; /**<  */
+static FILE *outfile = NULL;
 
 /**
  * @brief First input file.
@@ -148,18 +148,7 @@ int main(int argc, char **argv) {
     
     diff(file1, file2, outfile, ignore_case);
     
-    fclose_checked(file1);
-    fclose_checked(file2);
-    if(outfile_path != NULL) {
-        fclose_checked(outfile);
-    }
-    return EXIT_SUCCESS;
-}
-
-
-static void usage(void) {
-    fprintf(stderr, "Usage: %s [-i] [-o outfile] file1 file2\n", progname);
-    exit(EXIT_FAILURE);
+    cleanup_exit(EXIT_SUCCESS);
 }
 
 void cleanup_exit(int status) {
@@ -176,6 +165,11 @@ void cleanup_exit(int status) {
     }
 
     exit(status);
+}
+
+static void usage(void) {
+    fprintf(stderr, "Usage: %s [-i] [-o outfile] file1 file2\n", progname);
+    exit(EXIT_FAILURE);
 }
 
 static FILE* fopen_checked(char *path, char *mode) {

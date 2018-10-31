@@ -45,6 +45,7 @@ void diff(FILE *file1, FILE *file2, FILE *out, int ignore_case) {
     ssize_t linelen1, linelen2;
 
     while(1) {
+        // Read from first file
         if((linelen1 = getline(&line1, &linecap1, file1)) <= 0) {
             if(feof(file1) != 0) {
                 break;
@@ -55,6 +56,7 @@ void diff(FILE *file1, FILE *file2, FILE *out, int ignore_case) {
             cleanup_exit(EXIT_FAILURE);
         }
 
+        // Read from second file
         if((linelen2 = getline(&line2, &linecap2, file2)) <= 0) {
             if(feof(file2) != 0) {
                 break;
@@ -65,6 +67,7 @@ void diff(FILE *file1, FILE *file2, FILE *out, int ignore_case) {
             cleanup_exit(EXIT_FAILURE);
         }
 
+        // Compare lines
         diffcount = diff_line(line1, line2, linelen1, linelen2, ignore_case);
 
         if(diffcount > 0) {
