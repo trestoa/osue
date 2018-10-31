@@ -1,12 +1,14 @@
 /**
  * @file mydiff.c
  * @author Markus Klein (e11707252@student.tuwien.ac.at) 
- * @brief This modules contains the implemention of the diff algorithm.
+ * @brief Implementation of the mydiff module.
  * @version 1.0
  * @date 2018-10-31
  * 
- * @details This module contains the diff methods, which implements the diff
- * algorithm specified in the assignment for exercise 1a.
+ * @details The implementation of the diff algorithm is split into the function diff 
+ * and diff_line. The function diff handles the file IO and iterates over the two input
+ * files line per line, diff_line iterates character by character and calculates the
+ * number of different symbols per line.
  */
 
 #include <unistd.h>

@@ -1,4 +1,5 @@
 /**
+ * @file main.c
  * @author Markus Klein (e11707252@student.tuwien.ac.at)
  * @brief Main module for exercise a1
  * @version 1.0

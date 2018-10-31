@@ -1,11 +1,11 @@
 /**
  * @file mydiff.h
  * @author Markus Klein (e11707252@student.tuwien.ac.at) 
- * @brief This modules contains the implemention of the diff algorithm.
+ * @brief This modules contains the diff algorithm for "mydiff".
  * @version 1.0
  * @date 2018-10-31
  * 
- * @details This module contains the diff methods, which implements the diff
+ * @details This module contains the diff function, which implements the diff
  * algorithm specified in the assignment for exercise 1a.
  */
 
