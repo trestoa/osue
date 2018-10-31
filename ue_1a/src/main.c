@@ -19,9 +19,32 @@
 
 #include "mydiff.h"
 
-char *progname; /**< Program name. Name of the executable used for usage and error messages. */
+/**
+ * @brief Program name.
+ * @details Name of the executable used for usage and error messages.
+ */
+char *progname;
 
-static FILE *outfile = NULL, *file1 = NULL, *file2 = NULL;
+/**
+ * @brief Output file.
+ * @details File where file differences are written to. Defined here as module wide
+ * variable so that cleanup_exit can access it during program shutdown.
+ */
+static FILE *outfile = NULL; /**<  */
+
+/**
+ * @brief First input file.
+ * @details This is the first file passed to the diff algorithm. Defined here as 
+ * module wide variable so that cleanup_exit can access it during program shutdown.
+ */
+static FILE *file1 = NULL; 
+
+/**
+ * @brief Second input file.
+ * @details This is the second file passed to the diff algorithm. Defined here as 
+ * module wide variable so that cleanup_exit can access it during program shutdown.
+ */
+static FILE *file2 = NULL; 
 
 /**
  * Cleanup and terminate.

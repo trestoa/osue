@@ -36,7 +36,7 @@ extern void cleanup_exit(int status);
  * @details Compares the given strings character by character and counts the number 
  * of different characters. Stops with the storter line, if linelen1 != linelen2.
  */
-static int diff_line(char *line1, char *line2, ssize_t linelen1, ssize_t linelen2, int ignore_case);
+static unsigned int diff_line(char *line1, char *line2, ssize_t linelen1, ssize_t linelen2, int ignore_case);
 
 void diff(FILE *file1, FILE *file2, FILE *out, int ignore_case) {
     unsigned int diffcount, linecount = 1;
@@ -82,9 +82,9 @@ void diff(FILE *file1, FILE *file2, FILE *out, int ignore_case) {
     free(line2);
 }
 
-int diff_line(char *line1, char *line2, ssize_t linelen1, ssize_t linelen2, int ignore_case) {
+unsigned int diff_line(char *line1, char *line2, ssize_t linelen1, ssize_t linelen2, int ignore_case) {
     // Check for linelen1-1 and linelen2-1 here as the returned char* contains the delimiter character
-    int diffcount = 0;
+    unsigned int diffcount = 0;
     for(ssize_t linepos = 0; linepos < linelen1-1 && linepos < linelen2-1; linepos++) {
         char c1 = line1[linepos], c2 = line2[linepos];
         if(ignore_case == 1) {
