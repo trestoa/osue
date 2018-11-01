@@ -23,10 +23,11 @@ typedef enum http_err {
  * @details Checks the given URL string for valid format and extracts the 
  * hostname and file path to two newly allocated buffers. The given hostname 
  * and file_path pointers will point to the buffers when the function returned 
- * successfully. Strings are being copied to the buffers, meaning the initial 
- * url buffer can be freed afterwards. Returns HTTP_SUCCESS if successful and
- * a respective error code of the http_err_t enum otherwise.
+ * successfully. Returns HTTP_SUCCESS if successful and a respective error 
+ * code of the http_err_t enum otherwise.
  */
 int parse_url(char *url, char **hostname, char **file_path);
+
+
 
 #endif
