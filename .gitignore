@@ -1,3 +1,5 @@
 *.o
 */doc/latex
 */doc/html
+.vscode
+.DS_STORE
