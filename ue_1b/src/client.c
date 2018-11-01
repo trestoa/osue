@@ -30,6 +30,8 @@ static void connect_to_server(void);
 
 static void cleanup_exit(int status);
 
+static void perform_request(void);
+
 int main(int argc, char **argv) {
     progname = argv[0];
 
@@ -69,6 +71,7 @@ int main(int argc, char **argv) {
     }
     
     connect_to_server();
+    perform_request();
     
     cleanup_exit(EXIT_SUCCESS);
 }
@@ -104,6 +107,38 @@ static void connect_to_server(void) {
         ERRPRINTF("fdopen failed: %s\n", strerror(errno));
         cleanup_exit(EXIT_FAILURE);
     }
+}
+
+static void perform_request(void) {
+    http_frame_t frame;
+    memset(&frame, 0, sizeof(frame));
+    frame.method = "GET";
+    frame.port = service;
+    frame.file_path = file_path;
+    frame.header_len = 2;
+    
+    // "Host: " is 6 characters + null byte -> allocate length of hostname + 7
+    size_t hostlen = strlen(hostname) + 7;
+    char *host = malloc(hostlen * sizeof(char));
+    snprintf(host, hostlen, "Host: %s", hostname);
+
+    http_header_t headers[] = {host, "Connection: close"};
+    frame.headers = headers;
+
+    int res = http_send_req_frame(sock, &frame);
+    if(res != HTTP_SUCCESS) {
+        switch(res) {
+        case HTTP_ERR_INTERNAL:
+            ERRPRINTF("error while sending request: %s\n", strerror(errno));
+        case HTTP_ERR_STREAM:
+            ERRPRINTF("error while sending request: %s\n", strerror(ferror(sock)));
+        default:
+            ERRPUTS("error while sending request: unknown error");
+        }
+        free(host);
+        cleanup_exit(EXIT_FAILURE);
+    }
+    http_recv_res_frame(sock, NULL);
 }
 
 static void cleanup_exit(int status) {

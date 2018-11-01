@@ -1,6 +1,10 @@
 #ifndef HTTP_H
 #define HTTP_H
 
+#include <stdio.h>
+
+#define HTTP_VERSION "HTTP/1.1"
+
 typedef enum http_err {
     // Operation was successful
     HTTP_SUCCESS = 0, 
@@ -9,8 +13,27 @@ typedef enum http_err {
     HTTP_ERR_URL_FORMAT = 1,
 
     // An error outside the boundries of this module occoured -> consult errno()
-    HTTP_ERR_INTERNAL = 2 
+    HTTP_ERR_INTERNAL = 2,
+
+    // An error stdio error occured -> consult ferror()
+    HTTP_ERR_STREAM = 3
 } http_err_t;
+
+typedef char* http_header_t;
+
+typedef struct http_frame {
+    char *status;
+    
+    char *method;
+    char *file_path;
+    char *port;
+
+    int header_len;
+    http_header_t *headers;
+
+    int body_len;
+    void *body;
+} http_frame_t;
 
 /**
  * @brief Check URL format and extract hostname and file path.
@@ -28,6 +51,16 @@ typedef enum http_err {
  */
 int parse_url(char *url, char **hostname, char **file_path);
 
+int http_frame(http_frame_t **frame);
 
+//int http_req_get_frame(http_frame_t **frame, char *hostname, char *port, char *file_path);
+
+int http_send_req_frame(FILE* sock, http_frame_t *req);
+
+//int http_send_res_frame(FILE* sock, http_frame_t *res);
+
+//int http_recv_req_frame(FILE* sock, http_frame_t **req);
+
+int http_recv_res_frame(FILE* sock, http_frame_t **res);
 
 #endif
