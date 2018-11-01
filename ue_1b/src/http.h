@@ -2,8 +2,14 @@
 #define HTTP_H
 
 typedef enum http_err {
-    HTTP_SUCCESS = 0,
-    HTTP_ERR_URL_FORMAT = 1
+    // Operation was successful
+    HTTP_SUCCESS = 0, 
+
+    // URL parsing failed due to invalid fomat
+    HTTP_ERR_URL_FORMAT = 1,
+
+    // An error outside the boundries of this module occoured -> consult errno()
+    HTTP_ERR_INTERNAL = 2 
 } http_err_t;
 
 /**
