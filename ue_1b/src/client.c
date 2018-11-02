@@ -110,7 +110,7 @@ static void connect_to_server(void) {
 }
 
 static void perform_request(void) {
-    http_frame_t frame;
+    http_frame_t frame, *res;
     memset(&frame, 0, sizeof(frame));
     frame.method = "GET";
     frame.port = service;
@@ -118,35 +118,42 @@ static void perform_request(void) {
     frame.header_len = 2;
     
     // "Host: " is 6 characters + null byte -> allocate length of hostname + 7
-    size_t hostlen = strlen(hostname) + 7;
-    char *host = malloc(hostlen * sizeof(char));
-    snprintf(host, hostlen, "Host: %s", hostname);
+    http_header_t conn_header = {"Connection", "close", NULL};
+    http_header_t host_header = {"Host", hostname, &conn_header};
+    frame.header_first = &host_header;
 
-    http_header_t headers[] = {host, "Connection: close"};
-    frame.headers = headers;
-
-    int res = http_send_req_frame(sock, &frame);
-    if(res != HTTP_SUCCESS) {
-        switch(res) {
+    int ret = http_send_req(sock, &frame);
+    if(ret != HTTP_SUCCESS) {
+        switch(ret) {
         case HTTP_ERR_INTERNAL:
             ERRPRINTF("error while sending request: %s\n", strerror(errno));
+            break;
         case HTTP_ERR_STREAM:
             ERRPRINTF("error while sending request: %s\n", strerror(ferror(sock)));
+            break;
         default:
             ERRPUTS("error while sending request: unknown error");
         }
-        free(host);
         cleanup_exit(EXIT_FAILURE);
     }
-    http_recv_res_frame(sock, NULL);
+
+    ret = http_recv_res(sock, &res, NULL);
+    if(ret != HTTP_SUCCESS) {
+        // TODO: propper error handling
+        cleanup_exit(EXIT_FAILURE);
+    }
+    printf("Response status: %lu\n", res->status);
 }
 
 static void cleanup_exit(int status) {
     free(hostname);
     free(file_path);
-    freeaddrinfo(ai);
+    if(ai != NULL) {
+        freeaddrinfo(ai);
+    }
 
     if(sock != NULL) {
         fclose(sock);
     }
+    exit(status);
 }
