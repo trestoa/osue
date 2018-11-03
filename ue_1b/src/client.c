@@ -7,6 +7,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
+#include <libgen.h>
 
 #include "utils.h"
 #include "http.h"
@@ -22,7 +23,7 @@ static char *hostname = NULL,
             *file_path = NULL;
 
 static struct addrinfo *ai = NULL;
-static FILE *sock = NULL;
+static FILE *sock = NULL, *out = NULL;
 
 static void usage(void);
 
@@ -31,6 +32,8 @@ static void connect_to_server(void);
 static void cleanup_exit(int status);
 
 static void perform_request(void);
+
+static void open_out_file(void);
 
 int main(int argc, char **argv) {
     progname = argv[0];
@@ -122,6 +125,7 @@ static void perform_request(void) {
     http_header_t host_header = {"Host", hostname, &conn_header};
     frame.header_first = &host_header;
 
+    // Send request
     int ret = http_send_req(sock, &frame);
     if(ret != HTTP_SUCCESS) {
         switch(ret) {
@@ -137,12 +141,53 @@ static void perform_request(void) {
         cleanup_exit(EXIT_FAILURE);
     }
 
-    ret = http_recv_res(sock, &res, NULL);
+    
+    // Open output file
+    open_out_file();
+
+    // Receive response
+    ret = http_recv_res(sock, &res, out);
     if(ret != HTTP_SUCCESS) {
         // TODO: propper error handling
         cleanup_exit(EXIT_FAILURE);
     }
-    printf("Response status: %lu\n", res->status);
+}
+
+static void open_out_file(void) {
+    if(outfile == NULL && outdir == NULL) {
+        out = stdout;
+    } else {
+        char *path;
+        if(outfile != NULL) {
+            path = outfile;
+        } else {
+            char *filename = basename(file_path);
+            if(strcmp(filename, "/")) {
+                filename = "index.html";
+            }
+
+            int trailing_slash = outdir[strlen(outdir)-1] == '/';
+            // Add 1 additional character
+            int path_len = strlen(outdir) + strlen(filename) + (trailing_slash == 1 ? 0 : 1) + 1;
+
+            path = malloc(path_len * sizeof(*path));
+            if(path == NULL) {
+                ERRPRINTF("malloc failed: %s\n", strerror(errno));
+                cleanup_exit(EXIT_FAILURE);
+            }
+            
+            if(trailing_slash == 0) {
+                snprintf(path, path_len, "%s/%s", outdir, filename);
+            } else {
+                snprintf(path, path_len, "%s%s", outdir, filename);
+            }
+        }
+
+        if((out = fopen(path, "w")) == NULL) {
+            ERRPRINTF("fopen on %s failed: %s\n", path, strerror(errno));
+            cleanup_exit(EXIT_FAILURE);
+        }
+    }
 }
 
 static void cleanup_exit(int status) {
@@ -154,6 +199,10 @@ static void cleanup_exit(int status) {
 
     if(sock != NULL) {
         fclose(sock);
+    }
+
+    if(out != NULL) {
+        fclose(out);
     }
     exit(status);
 }

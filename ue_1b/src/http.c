@@ -5,6 +5,8 @@
 
 #include "http.h"
 
+static int read_headers(FILE *sock, http_frame_t **res);
+
 int parse_url(char *url, char **hostname, char **file_path) {
     // 7 == length of "http://"
     if(strncmp(url, "http://", 7) != 0) {
@@ -73,7 +75,7 @@ int http_send_req(FILE* sock, http_frame_t *req) {
     return HTTP_SUCCESS;
 }
 
-int http_recv_res(FILE* sock, http_frame_t **res, FILE *out) {
+int http_recv_res(FILE *sock, http_frame_t **res, FILE *out) {
     int ret = http_frame(res);
     if(ret != HTTP_SUCCESS){
         return ret;
@@ -85,11 +87,13 @@ int http_recv_res(FILE* sock, http_frame_t **res, FILE *out) {
 
     // Read first header line with response status
     if((linelen = getline(&line, &linecap, sock)) <= 0) {
+        free(line);
         return HTTP_ERR_STREAM;
     }
 
     char* tok = strtok(line, " ");
     if(tok == NULL || strcmp(tok, HTTP_VERSION) != 0) {
+        free(line);
         return HTTP_ERR_PROTOCOL;
     }
 
@@ -99,20 +103,95 @@ int http_recv_res(FILE* sock, http_frame_t **res, FILE *out) {
     // Check for various possible errors (code from man 3 strtol)
     if ((errno == ERANGE && ((*res)->status == LONG_MAX || (*res)->status == LONG_MIN))
             || (errno != 0 && (*res)->status == 0)) {
+        free(line);
         return HTTP_ERR_PROTOCOL;
     }
+    free(line);
+
     // The rest of the first header line is ignored here for simplicity
     // Continue parsing the other headers
-
-    while(1) {
-        if((linelen = getline(&line, &linecap, sock)) <= 0) {
-            if(feof(sock) != 0) {
-                break;
-            }
-            return HTTP_ERR_STREAM;
-        }
-        printf(line);
+    ret = read_headers(sock, res);
+    if(ret != HTTP_SUCCESS){
+        return ret;
     }
 
+    // Now write body to out
+    // TODO: Implement reading until EOF if Content-Length is missing
+    char buf[1024];
+    int to_read, body_remaining = (*res)->body_len;
+    while(body_remaining > 0) {
+        to_read = sizeof(buf) < body_remaining ? sizeof(buf) : body_remaining;
+        if(fread(buf, 1, to_read, sock) != to_read) {
+            return HTTP_ERR_STREAM;
+        }
+
+        if(fwrite(buf, 1, to_read, out) != to_read) {
+            return HTTP_ERR_STREAM;
+        }
+
+        body_remaining -= to_read;
+    }
+
+    return HTTP_SUCCESS;
+}
+
+static int read_headers(FILE *sock, http_frame_t **res) {
+    // TODO: cleanup (free, ...)
+    char *line = NULL;
+    size_t linecap = 0;
+    ssize_t linelen;
+
+    http_header_t *last_header = NULL, *cur_header;
+    for(int len = 0; ; last_header = cur_header, len++) {
+        if((linelen = getline(&line, &linecap, sock)) <= 0) {
+            free(line);
+            return HTTP_ERR_STREAM;
+        }
+
+        if(strcmp(line, "\r\n") == 0) {
+            break;
+        }
+
+        cur_header = malloc(sizeof(http_frame_t));
+        if(cur_header == NULL) {
+            free(line);
+            return HTTP_ERR_INTERNAL;
+        }
+        memset(cur_header, 0, sizeof(*cur_header));
+        if((*res)->header_first == NULL) {
+            (*res)->header_first = cur_header;
+        } else {
+            last_header->next = cur_header;
+        }
+
+        char *sep = strpbrk(line, ":");
+        if(sep == NULL) {
+            free(line);
+            return HTTP_ERR_PROTOCOL;
+        }
+        sep[0] = '\0';
+        cur_header->name = strdup(line);
+
+        do {
+            if((sep - line)/sizeof(*line) >= linelen) {
+                free(line);
+                return HTTP_ERR_PROTOCOL;
+            }
+            sep++;
+        } while(sep[0] == ' ');
+        cur_header->value = strdup(sep);
+
+        // Check for content length
+        if(strcmp(cur_header->name, "Content-Length") == 0) {
+            errno = 0;
+            (*res)->body_len = strtol(cur_header->value, NULL, 10);
+            if(((errno == ERANGE && ((*res)->body_len == LONG_MAX || (*res)->body_len == LONG_MIN))
+                || (errno != 0 && (*res)->body_len == 0))) {
+                free(line);
+                return HTTP_ERR_PROTOCOL;
+            }
+        }
+    }
+    free(line);
     return HTTP_SUCCESS;
 }

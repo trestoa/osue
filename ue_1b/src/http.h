@@ -38,7 +38,7 @@ typedef struct http_frame {
     int header_len;
     http_header_t *header_first;
 
-    int body_len;
+    long int body_len;
     void *body;
 } http_frame_t;
 
