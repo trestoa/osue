@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <limits.h>
+#include <strings.h>
 
 #include "http.h"
 
@@ -48,6 +49,23 @@ int http_frame(http_frame_t **frame) {
     }
     memset(*frame, 0, sizeof(**frame));
     return HTTP_SUCCESS;
+}
+
+void http_free_frame(http_frame_t *frame) {
+    free(frame->status_text);
+    free(frame->method);
+    free(frame->file_path);
+    free(frame->port);
+    free(frame->body);
+
+    http_header_t *last_header, *cur_header = frame->header_first;
+    while(cur_header != NULL) {
+        last_header = cur_header;
+        cur_header = cur_header->next;
+        free(last_header);
+    }
+
+    free(frame);
 }
 
 int http_send_req(FILE* sock, http_frame_t *req) {
@@ -98,7 +116,10 @@ int http_recv_res(FILE *sock, http_frame_t **res, FILE *out) {
     }
 
     errno = 0;
-    tok = strtok(NULL, " ");
+    if((tok = strtok(NULL, " ")) == NULL) {
+        free(line);
+        return HTTP_ERR_PROTOCOL;
+    }
     (*res)->status = strtol(tok, NULL, 10);
     // Check for various possible errors (code from man 3 strtol)
     if ((errno == ERANGE && ((*res)->status == LONG_MAX || (*res)->status == LONG_MIN))
@@ -106,9 +127,14 @@ int http_recv_res(FILE *sock, http_frame_t **res, FILE *out) {
         free(line);
         return HTTP_ERR_PROTOCOL;
     }
+
+    if((tok = strtok(NULL, "\r")) == NULL) {
+        free(line);
+        return HTTP_ERR_PROTOCOL;
+    }
+    (*res)->status_text = strdup(tok);
     free(line);
 
-    // The rest of the first header line is ignored here for simplicity
     // Continue parsing the other headers
     ret = read_headers(sock, res);
     if(ret != HTTP_SUCCESS){
@@ -116,30 +142,49 @@ int http_recv_res(FILE *sock, http_frame_t **res, FILE *out) {
     }
 
     // Now write body to out
-    // TODO: Implement reading until EOF if Content-Length is missing
+    // Only write body of status == 200
+    if((*res)->status != 200) {
+        return HTTP_SUCCESS;
+    }
+
     char buf[1024];
-    int to_read, body_remaining = (*res)->body_len;
+    int to_read, body_remaining;
+    if((*res)->body_len != -1) {
+        body_remaining = (*res)->body_len;
+    } else {
+        body_remaining = sizeof(buf);
+    }
     while(body_remaining > 0) {
         to_read = sizeof(buf) < body_remaining ? sizeof(buf) : body_remaining;
         if(fread(buf, 1, to_read, sock) != to_read) {
-            return HTTP_ERR_STREAM;
+            if((*res)->body_len == -1 && feof(sock) != 0) {
+                body_remaining = 0;
+            } else {
+                http_free_frame(*res);
+                return HTTP_ERR_STREAM;
+            }
         }
 
         if(fwrite(buf, 1, to_read, out) != to_read) {
+            http_free_frame(*res);
             return HTTP_ERR_STREAM;
         }
-
-        body_remaining -= to_read;
+        
+        if((*res)->body_len != -1) {
+            body_remaining -= to_read;
+        }
     }
 
     return HTTP_SUCCESS;
 }
 
 static int read_headers(FILE *sock, http_frame_t **res) {
-    // TODO: cleanup (free, ...)
     char *line = NULL;
     size_t linecap = 0;
     ssize_t linelen;
+    
+    // Body length of -1 indicates that no content-length header was present
+    (*res)->body_len = -1;
 
     http_header_t *last_header = NULL, *cur_header;
     for(int len = 0; ; last_header = cur_header, len++) {
@@ -171,7 +216,12 @@ static int read_headers(FILE *sock, http_frame_t **res) {
         }
         sep[0] = '\0';
         cur_header->name = strdup(line);
+        if(cur_header->name == NULL) {
+            free(line);
+            return HTTP_ERR_INTERNAL;
+        }
 
+        // strip delimiter and whitespaces
         do {
             if((sep - line)/sizeof(*line) >= linelen) {
                 free(line);
@@ -180,9 +230,13 @@ static int read_headers(FILE *sock, http_frame_t **res) {
             sep++;
         } while(sep[0] == ' ');
         cur_header->value = strdup(sep);
+        if(cur_header->value == NULL) {
+            free(line);
+            return HTTP_ERR_INTERNAL;
+        }
 
         // Check for content length
-        if(strcmp(cur_header->name, "Content-Length") == 0) {
+        if(strcasecmp(cur_header->name, "Content-Length") == 0) {
             errno = 0;
             (*res)->body_len = strtol(cur_header->value, NULL, 10);
             if(((errno == ERANGE && ((*res)->body_len == LONG_MAX || (*res)->body_len == LONG_MIN))

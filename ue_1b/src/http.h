@@ -30,6 +30,7 @@ typedef struct http_header {
 
 typedef struct http_frame {
     long int status;
+    char *status_text;
     
     char *method;
     char *file_path;
@@ -60,6 +61,10 @@ int parse_url(char *url, char **hostname, char **file_path);
 
 int http_frame(http_frame_t **frame);
 
+char *http_strerr(int err);
+
+void http_free_frame(http_frame_t *frame);
+
 //int http_req_get_frame(http_frame_t **frame, char *hostname, char *port, char *file_path);
 
 int http_send_req(FILE* sock, http_frame_t *req);
@@ -68,6 +73,16 @@ int http_send_req(FILE* sock, http_frame_t *req);
 
 //int http_recv_req_frame(FILE* sock, http_frame_t **req);
 
+/**
+ * @brief 
+ * 
+ * @param sock 
+ * @param res 
+ * @param out 
+ * @return int
+ *  
+ * @details Does not free response http frame on error.
+ */
 int http_recv_res(FILE *sock, http_frame_t **res, FILE *out);
 
 #endif

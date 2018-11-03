@@ -12,11 +12,13 @@
 #include "utils.h"
 #include "http.h"
 
+#define EXIT_PROTOCOL_ERR 2
+#define EXIT_STATUS_ERR 3
+
 // These are all pointers to non allocated memory space -> no free needed.
 static char *service = "http", 
      *outdir = NULL, 
-     *outfile = NULL,
-     *url = NULL;
+     *outfile = NULL;
 
 // These are all pointers to allocated memory space -> free needed.
 static char *hostname = NULL,
@@ -29,6 +31,8 @@ static void usage(void);
 
 static void connect_to_server(void);
 
+static void handle_http_err(int err, char *cause);
+
 static void cleanup_exit(int status);
 
 static void perform_request(void);
@@ -37,6 +41,7 @@ static void open_out_file(void);
 
 int main(int argc, char **argv) {
     progname = argv[0];
+    char *url = NULL;
 
     int c;
     while((c = getopt(argc, argv, "p:o:d:")) != -1) {
@@ -68,8 +73,9 @@ int main(int argc, char **argv) {
     }
 
     url = argv[0];
-    if(parse_url(url, &hostname, &file_path) != 0) {
-        ERRPUTS("Invalid URL format.");
+    int ret = parse_url(url, &hostname, &file_path);
+    if(ret != 0) {
+        handle_http_err(ret, url);
         exit(EXIT_FAILURE);
     }
     
@@ -128,19 +134,8 @@ static void perform_request(void) {
     // Send request
     int ret = http_send_req(sock, &frame);
     if(ret != HTTP_SUCCESS) {
-        switch(ret) {
-        case HTTP_ERR_INTERNAL:
-            ERRPRINTF("error while sending request: %s\n", strerror(errno));
-            break;
-        case HTTP_ERR_STREAM:
-            ERRPRINTF("error while sending request: %s\n", strerror(ferror(sock)));
-            break;
-        default:
-            ERRPUTS("error while sending request: unknown error");
-        }
-        cleanup_exit(EXIT_FAILURE);
+        handle_http_err(ret, "error while sending request");
     }
-
     
     // Open output file
     open_out_file();
@@ -148,9 +143,16 @@ static void perform_request(void) {
     // Receive response
     ret = http_recv_res(sock, &res, out);
     if(ret != HTTP_SUCCESS) {
-        // TODO: propper error handling
-        cleanup_exit(EXIT_FAILURE);
+        http_free_frame(res);
+        handle_http_err(ret, "error while receiving response");
     }
+
+    if(res->status != 200) {
+        ERRPRINTF("server returned with status: %lu %s\n", res->status, res->status_text);
+        http_free_frame(res);
+        cleanup_exit(EXIT_STATUS_ERR);
+    }
+    http_free_frame(res);
 }
 
 static void open_out_file(void) {
@@ -188,6 +190,26 @@ static void open_out_file(void) {
             cleanup_exit(EXIT_FAILURE);
         }
     }
+}
+
+static void handle_http_err(int err, char *cause) {
+    switch(err) {
+    case HTTP_ERR_URL_FORMAT:
+        ERRPRINTF("'%s' is not a valid url\n", cause);
+        break;
+    case HTTP_ERR_INTERNAL:
+        ERRPRINTF("%s: %s\n", cause, strerror(errno));
+        break;
+    case HTTP_ERR_STREAM:
+        ERRPRINTF("%s: %s\n", cause, strerror(ferror(sock)));
+        break;
+    case HTTP_ERR_PROTOCOL:
+        ERRPUTS("Protocol error!");
+        cleanup_exit(EXIT_PROTOCOL_ERR);
+    default:
+        ERRPRINTF("%s: unknown error", cause);
+    }
+    cleanup_exit(EXIT_FAILURE);
 }
 
 static void cleanup_exit(int status) {
