@@ -7,6 +7,4 @@
 #define ERRPUTS(msg) \
     fprintf(stderr, "[%s] " msg, progname)
 
-char *progname;
-
 #endif

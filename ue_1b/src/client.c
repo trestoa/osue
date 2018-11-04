@@ -15,6 +15,8 @@
 #define EXIT_PROTOCOL_ERR 2
 #define EXIT_STATUS_ERR 3
 
+static char *progname;
+
 // These are all pointers to non allocated memory space -> no free needed.
 static char *service = "http", 
      *outdir = NULL, 
@@ -122,7 +124,6 @@ static void perform_request(void) {
     http_frame_t frame, *res;
     memset(&frame, 0, sizeof(frame));
     frame.method = "GET";
-    frame.port = service;
     frame.file_path = file_path;
     frame.header_len = 2;
     
@@ -137,6 +138,7 @@ static void perform_request(void) {
         handle_http_err(ret, "error while sending request");
     }
     
+    // TODO: only open outfile when request successful
     // Open output file
     open_out_file();
 
@@ -201,6 +203,10 @@ static void handle_http_err(int err, char *cause) {
         ERRPRINTF("%s: %s\n", cause, strerror(errno));
         break;
     case HTTP_ERR_STREAM:
+        if (feof(sock) != 0) {
+            ERRPRINTF("%s: EOF reached\n", cause);
+            break;
+        }
         ERRPRINTF("%s: %s\n", cause, strerror(ferror(sock)));
         break;
     case HTTP_ERR_PROTOCOL:

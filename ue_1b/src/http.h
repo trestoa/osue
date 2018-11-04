@@ -3,6 +3,8 @@
 
 #include <stdio.h>
 
+// TODO: document structs
+
 /**
  * @brief Http version.
  * @details Http version supported by this module and used for sending and validating
@@ -39,7 +41,6 @@ typedef struct http_frame {
     
     char *method; // Request only
     char *file_path; // Request only
-    char *port; // Request only
 
     int header_len; 
     http_header_t *header_first;
@@ -108,7 +109,7 @@ int http_send_req(FILE* sock, http_frame_t *req);
 
 //int http_send_res_frame(FILE* sock, http_frame_t *res);
 
-//int http_recv_req_frame(FILE* sock, http_frame_t **req);
+int http_recv_req(FILE* sock, http_frame_t **req);
 
 /**
  * @brief Receive a http response from the given socket.

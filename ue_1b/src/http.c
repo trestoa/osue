@@ -8,6 +8,8 @@
 
 static int read_headers(FILE *sock, http_frame_t **res);
 
+static int read_first_line(FILE *sock, char **line, char **first, char **second, char **third);
+
 int parse_url(char *url, char **hostname, char **file_path) {
     // 7 == length of "http://"
     if(strncmp(url, "http://", 7) != 0) {
@@ -55,7 +57,6 @@ void http_free_frame(http_frame_t *frame) {
     free(frame->status_text);
     free(frame->method);
     free(frame->file_path);
-    free(frame->port);
     free(frame->body);
 
     http_header_t *last_header, *cur_header = frame->header_first;
@@ -99,41 +100,37 @@ int http_recv_res(FILE *sock, http_frame_t **res, FILE *out) {
         return ret;
     }
     
-    char *line = NULL;
-    size_t linecap = 0;
-    ssize_t linelen;
-
-    // Read first header line with response status
-    if((linelen = getline(&line, &linecap, sock)) <= 0) {
-        free(line);
-        return HTTP_ERR_STREAM;
+    char *first_line = NULL,
+         *http_version = NULL,
+         *status = NULL,
+         *status_text = NULL;
+    ret = read_first_line(sock, &first_line, &http_version, &status, &status_text);
+    if(ret != HTTP_SUCCESS) {
+        free(first_line);
+        return ret;
     }
 
-    char* tok = strtok(line, " ");
-    if(tok == NULL || strcmp(tok, HTTP_VERSION) != 0) {
-        free(line);
+    // Check http version
+    if(strcmp(http_version, HTTP_VERSION) != 0) {
+        free(first_line);
         return HTTP_ERR_PROTOCOL;
     }
-
+    // Convert status
     errno = 0;
-    if((tok = strtok(NULL, " ")) == NULL) {
-        free(line);
-        return HTTP_ERR_PROTOCOL;
-    }
-    (*res)->status = strtol(tok, NULL, 10);
+    (*res)->status = strtol(status, NULL, 10);
     // Check for various possible errors (code from man 3 strtol)
     if ((errno == ERANGE && ((*res)->status == LONG_MAX || (*res)->status == LONG_MIN))
             || (errno != 0 && (*res)->status == 0)) {
-        free(line);
+        free(first_line);
         return HTTP_ERR_PROTOCOL;
     }
-
-    if((tok = strtok(NULL, "\r")) == NULL) {
-        free(line);
-        return HTTP_ERR_PROTOCOL;
+    // Save status text
+    (*res)->status_text = strdup(status_text);
+    if((*res)->status_text == NULL) {
+        free(first_line);
+        return HTTP_ERR_INTERNAL;
     }
-    (*res)->status_text = strdup(tok);
-    free(line);
+    free(first_line);
 
     // Continue parsing the other headers
     ret = read_headers(sock, res);
@@ -174,6 +171,77 @@ int http_recv_res(FILE *sock, http_frame_t **res, FILE *out) {
             body_remaining -= to_read;
         }
     }
+
+    return HTTP_SUCCESS;
+}
+
+int http_recv_req(FILE* sock, http_frame_t **req) {
+    int ret = http_frame(req);
+    if(ret != HTTP_SUCCESS){
+        return ret;
+    }
+
+    char *first_line = NULL,
+         *method = NULL,
+         *file_path = NULL,
+         *http_version = NULL;
+    ret = read_first_line(sock, &first_line, &method, &file_path, &http_version);
+    if(ret != HTTP_SUCCESS) {
+        free(first_line);
+        return ret;
+    }
+    // Check http version
+    if(strcmp(http_version, HTTP_VERSION) != 0) {
+        free(first_line);
+        return HTTP_ERR_PROTOCOL;
+    }
+    // Save method and file path
+    (*req)->method = strdup(method);
+    if((*req)->method == NULL) {
+        free(first_line);
+        return HTTP_ERR_INTERNAL;
+    }
+    (*req)->file_path = strdup(file_path);
+    if((*req)->file_path == NULL) {
+        free(first_line);
+        return HTTP_ERR_INTERNAL;
+    }
+    free(first_line);
+
+    // Read headers
+    ret = read_headers(sock, req);
+    if(ret != HTTP_SUCCESS){
+        return ret;
+    }
+
+    // Request bodies are not supported, ignore them
+    return HTTP_SUCCESS;
+}
+
+static int read_first_line(FILE *sock, char **line, char **first, char **second, char **third) {
+    size_t linecap = 0;
+    ssize_t linelen;
+    
+    // Read first header line with response status
+    if((linelen = getline(line, &linecap, sock)) <= 0) {
+        return HTTP_ERR_STREAM;
+    }
+
+    char* tok = strtok(*line, " ");
+    if(tok == NULL) {
+        return HTTP_ERR_PROTOCOL;
+    }
+    *first = tok;
+
+    if((tok = strtok(NULL, " ")) == NULL) {
+        return HTTP_ERR_PROTOCOL;
+    }
+    *second = tok;
+
+    if((tok = strtok(NULL, "\r")) == NULL) {
+        return HTTP_ERR_PROTOCOL;
+    }
+    *third = tok;
 
     return HTTP_SUCCESS;
 }

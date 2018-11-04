@@ -10,10 +10,10 @@ CFLAGS = -Wall -g -std=c99 -pedantic $(DEFS)
 SRC_PATH = src
 COMMON_OBJECTS = http.o
 CLIENT_OBJECTS = $(COMMON_OBJECTS) client.o
-SERVER_OBJECTS = $(COMMON_OBJECTS)
+SERVER_OBJECTS = $(COMMON_OBJECTS) server.o
 
 .PHONY: all clean
-all: client
+all: client server
 
 client: $(CLIENT_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
@@ -25,6 +25,7 @@ server: $(SERVER_OBJECTS)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 client.o: $(SRC_PATH)/client.c $(SRC_PATH)/utils.h $(SRC_PATH)/http.h
+server.o: $(SRC_PATH)/server.c $(SRC_PATH)/utils.h $(SRC_PATH)/http.h
 http.o: $(SRC_PATH)/http.c $(SRC_PATH)/http.h
 
 clean:
