@@ -90,8 +90,6 @@ int http_frame(http_frame_t **frame);
  */
 void http_free_frame(http_frame_t *frame);
 
-//int http_req_get_frame(http_frame_t **frame, char *hostname, char *port, char *file_path);
-
 /**
  * @brief Send a http request.
  * 
@@ -107,7 +105,7 @@ void http_free_frame(http_frame_t *frame);
  */
 int http_send_req(FILE* sock, http_frame_t *req);
 
-//int http_send_res_frame(FILE* sock, http_frame_t *res);
+int http_send_res(FILE* sock, http_frame_t *res, FILE *body);
 
 int http_recv_req(FILE* sock, http_frame_t **req);
 

@@ -5,6 +5,8 @@
 #include <errno.h>
 #include <signal.h>
 #include <string.h>
+#include <time.h>
+#include <libgen.h>
 
 #include "http.h"
 #include "utils.h"
@@ -12,6 +14,8 @@
 #define LISTEN_BACKLOG 50
 
 static char *progname;
+
+static char *docroot, *index_file = "index.html";
 
 static volatile sig_atomic_t quit = 0;
 
@@ -31,12 +35,9 @@ static void run_server(void);
 static void handle_request(FILE *conn);
 
 int main(int argc, char **argv) {
+    char *port = "8080";
     progname = argv[0];
 
-    char *index_file = "index.html";
-    char *port = "8080";
-    char *docroot;
-    
     int c;
     while((c = getopt(argc, argv, "p:i:")) != -1) {
         switch(c) {
@@ -142,7 +143,31 @@ static void run_server(void) {
 }
 
 static void handle_request(FILE *conn) {
-    http_frame_t *req;
+    // TODO: error handling: especially for http_send_res calls
+    http_frame_t res, *req;
+    memset(&res, 0, sizeof(res));
+
+    http_header_t conn_header = {"Connection", "close", NULL};
+    
+    time_t t = time(NULL);
+    struct tm *tm = gmtime(&t);
+    // We assume that 100 characters will be sufficient for the date
+    char timestr[100];
+    if(tm == NULL) {
+        ERRPUTS("gmtime failed");
+        fclose(conn);
+        cleanup_exit(EXIT_FAILURE);
+    }
+    // TODO: set locale?
+    if(strftime(timestr, sizeof(timestr), "%a, %d %b %Y %T %Z", tm) == 0) {
+        ERRPUTS("gmtime failed");
+        fclose(conn);
+        cleanup_exit(EXIT_FAILURE);
+    }
+    http_header_t date_header = {"Date", timestr, &conn_header};
+
+    res.header_first = &date_header;
+
     int ret = http_recv_req(conn, &req);
     if(ret != HTTP_SUCCESS) {
         switch(ret) {
@@ -153,22 +178,99 @@ static void handle_request(FILE *conn) {
         case HTTP_ERR_STREAM:
             if (feof(conn) != 0) {
                 ERRPUTS("error while receiving request: EOF reached");
-                break;
+                return;
             }
             ERRPRINTF("error while receiving request: %s\n", strerror(ferror(conn)));
             fclose(conn);
             cleanup_exit(EXIT_FAILURE);
         case HTTP_ERR_PROTOCOL:
             ERRPUTS("malformed request received");
-            // TODO: Send error response
-            break;
+            res.status = 400;
+            res.status_text = "Bad Request";
+            http_send_res(conn, &res, NULL);
+            return;
         default:
             ERRPRINTF("error while receiving request: unknown error: %u\n", ret);
             fclose(conn);
             cleanup_exit(EXIT_FAILURE);
         }
     } else {
-        // TODO: Send response
+        // TODO: case insensitive?
+        if(strcmp(req->method, "GET") != 0) {
+            res.status = 501;
+            res.status_text = "Not Implemented";
+            http_send_res(conn, &res, NULL);
+        } else {
+            // Add one character for null byte
+            int docroot_trailing_slash = docroot[strlen(docroot)-1] == '/';
+            
+            int path_len = strlen(req->file_path) + strlen(docroot) + 1;
+            int add_index = req->file_path[strlen(req->file_path)-1] == '/';
+            if(add_index == 1) {
+                path_len += strlen(index_file);
+            }
+            if(docroot_trailing_slash == 1) {
+                path_len++;
+            }
+
+            char *file_path = malloc(path_len);
+            if(file_path == NULL) {
+                ERRPRINTF("malloc failed: %s\n", strerror(errno));
+                fclose(conn);
+                cleanup_exit(EXIT_FAILURE);
+            }
+
+            if(docroot_trailing_slash == 1) {
+                snprintf(file_path, path_len, "%s/%s", docroot, req->file_path);
+            } else {
+                snprintf(file_path, path_len, "%s%s", docroot, req->file_path);
+            }
+            if(add_index == 1) {
+                strcat(file_path, index_file);
+            }
+            
+            FILE *file;
+            if((file = fopen(file_path, "r")) == NULL) {
+                if(errno == ENOENT) {
+                    res.status = 404;
+                    res.status_text = "Not Found";
+                    http_send_res(conn, &res, NULL);
+                    return;
+                }
+            }
+
+            if(fseek(file, 0L, SEEK_END) != 0) {
+                ERRPRINTF("fseek on %s failed: %s\n", file_path, strerror(errno));
+                fclose(conn);
+                cleanup_exit(EXIT_FAILURE);
+            }
+            int file_len = ftell(file);
+            // With a 64 bit integer, 21 characters are needed at most
+            char file_len_str[21];
+            snprintf(file_len_str, sizeof(file_len_str), "%u", file_len);
+            if(file_len < 0) {
+                ERRPRINTF("ftell on %s failed: %s\n", file_path, strerror(errno));
+                fclose(conn);
+                cleanup_exit(EXIT_FAILURE);
+            }
+            if(fseek(file, 0, SEEK_SET) != 0) {
+                ERRPRINTF("rewind on %s failed: %s\n", file_path, strerror(errno));
+                fclose(conn);
+                cleanup_exit(EXIT_FAILURE);
+            }
+
+            http_header_t c_length_header = {"Content-Length", file_len_str, &date_header};
+            res.status = 200;
+            res.status_text = "OK";
+            res.header_first = &c_length_header;
+            ret = http_send_res(conn, &res, file);
+            if(fclose(file) != 0) {
+                ERRPRINTF("fclose on %s failed: %s\n", file_path, strerror(errno));
+                fclose(conn);
+                cleanup_exit(EXIT_FAILURE);
+            }
+        }
+
         printf("Request: %s %s\n", req->method, req->file_path);
     }
 }

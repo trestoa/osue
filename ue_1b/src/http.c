@@ -6,9 +6,13 @@
 
 #include "http.h"
 
+static int write_headers(FILE *sock, http_frame_t *res);
+
 static int read_headers(FILE *sock, http_frame_t **res);
 
 static int read_first_line(FILE *sock, char **line, char **first, char **second, char **third);
+
+static int stream_pipe(FILE *src, FILE *drain, int len);
 
 int parse_url(char *url, char **hostname, char **file_path) {
     // 7 == length of "http://"
@@ -74,14 +78,7 @@ int http_send_req(FILE* sock, http_frame_t *req) {
         return HTTP_ERR_STREAM;
     }
 
-    for(http_header_t *cur_header = req->header_first; cur_header != NULL; cur_header = cur_header->next) {
-        if(fprintf(sock, "%s: %s\r\n", cur_header->name, cur_header->value) < 0) {
-            return HTTP_ERR_STREAM;
-        }
-    }
-    if(fputs("\r\n\r\n", sock) == EOF) {
-        return HTTP_ERR_STREAM;
-    }
+    write_headers(sock, req);
 
     if(req->body_len != 0) {
         if(fwrite(req->body, 1, req->body_len, sock) != req->body_len) {
@@ -91,6 +88,23 @@ int http_send_req(FILE* sock, http_frame_t *req) {
     if(fflush(sock) != 0) {
         return HTTP_ERR_INTERNAL;
     }
+    return HTTP_SUCCESS;
+}
+
+int http_send_res(FILE* sock, http_frame_t *res, FILE *body) {
+    if(fprintf(sock, "%s %lu %s\r\n", HTTP_VERSION, res->status, res->status_text) < 0) {
+        return HTTP_ERR_STREAM;
+    }
+
+    write_headers(sock, res);
+
+    if(body != NULL) {
+        int ret = stream_pipe(body, sock, -1);
+        if(ret != HTTP_SUCCESS) {
+            return ret;
+        }
+    }
+
     return HTTP_SUCCESS;
 }
 
@@ -144,32 +158,9 @@ int http_recv_res(FILE *sock, http_frame_t **res, FILE *out) {
         return HTTP_SUCCESS;
     }
 
-    char buf[1024];
-    int to_read, body_remaining;
-    if((*res)->body_len != -1) {
-        body_remaining = (*res)->body_len;
-    } else {
-        body_remaining = sizeof(buf);
-    }
-    while(body_remaining > 0) {
-        to_read = sizeof(buf) < body_remaining ? sizeof(buf) : body_remaining;
-        if(fread(buf, 1, to_read, sock) != to_read) {
-            if((*res)->body_len == -1 && feof(sock) != 0) {
-                body_remaining = 0;
-            } else {
-                http_free_frame(*res);
-                return HTTP_ERR_STREAM;
-            }
-        }
-
-        if(fwrite(buf, 1, to_read, out) != to_read) {
-            http_free_frame(*res);
-            return HTTP_ERR_STREAM;
-        }
-        
-        if((*res)->body_len != -1) {
-            body_remaining -= to_read;
-        }
+    ret = stream_pipe(sock, out, (*res)->body_len);
+    if(ret != HTTP_SUCCESS) {
+        return ret;
     }
 
     return HTTP_SUCCESS;
@@ -246,6 +237,18 @@ static int read_first_line(FILE *sock, char **line, char **first, char **second,
     return HTTP_SUCCESS;
 }
 
+static int write_headers(FILE *sock, http_frame_t *res) {
+    for(http_header_t *cur_header = res->header_first; cur_header != NULL; cur_header = cur_header->next) {
+        if(fprintf(sock, "%s: %s\r\n", cur_header->name, cur_header->value) < 0) {
+            return HTTP_ERR_STREAM;
+        }
+    }
+    if(fputs("\r\n", sock) == EOF) {
+        return HTTP_ERR_STREAM;
+    }
+    return HTTP_SUCCESS;
+}
+
 static int read_headers(FILE *sock, http_frame_t **res) {
     char *line = NULL;
     size_t linecap = 0;
@@ -315,5 +318,38 @@ static int read_headers(FILE *sock, http_frame_t **res) {
         }
     }
     free(line);
+    return HTTP_SUCCESS;
+}
+
+static int stream_pipe(FILE *src, FILE *drain, int len) {
+    char buf[1024];
+    memset(buf, 0, sizeof(buf));
+    int to_read, act_read, body_remaining;
+    
+    if(len != -1) {
+        body_remaining = len;
+    } else {
+        body_remaining = sizeof(buf);
+    }
+    while(body_remaining > 0) {
+        to_read = sizeof(buf) < body_remaining ? sizeof(buf) : body_remaining;
+        if((act_read = fread(buf, 1, to_read, src)) != to_read) {
+            if(len == -1 && feof(src) != 0) {
+                body_remaining = 0;
+            } else {
+                return HTTP_ERR_STREAM;
+            }
+        }
+
+        if(fwrite(buf, 1, act_read, drain) != to_read) {
+            return HTTP_ERR_STREAM;
+        }
+        
+        if(len != -1) {
+            body_remaining -= to_read;
+        }
+    }
+
+    fflush(drain);
     return HTTP_SUCCESS;
 }
