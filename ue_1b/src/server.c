@@ -17,7 +17,6 @@ static volatile sig_atomic_t quit = 0;
 
 static struct addrinfo *ai = NULL;
 static int sockfd = -1;
-static FILE *conn = NULL;
 
 static void usage(void);
 
@@ -28,6 +27,8 @@ static void cleanup_exit(int status);
 static void handle_signal(int signal);
 
 static void run_server(void);
+
+static void handle_request(FILE *conn);
 
 int main(int argc, char **argv) {
     progname = argv[0];
@@ -115,56 +116,61 @@ static void open_socket(char *port) {
 
 static void run_server(void) {
     int connfd;
+    FILE *conn;
     while(!quit) {
         connfd = accept(sockfd, NULL, NULL);
         if(connfd < 0) {
-            if(errno != EINTR) {
+            if(errno == EINTR) {
                 continue;    
             }
             ERRPRINTF("accept failed: %s\n", strerror(errno));
             cleanup_exit(EXIT_FAILURE);
         }
-
         if((conn = fdopen(connfd, "w+")) == NULL) {
-            ERRPRINTF("fdopen failed: %s\n", strerror(errno));
+            ERRPRINTF("fdopen connfd failed: %s\n", strerror(errno));
             cleanup_exit(EXIT_FAILURE);
         }
 
-        http_frame_t *req;
-        int ret = http_recv_req(conn, &req);
-        if(ret != NULL) {
-            switch(ret) {
-            case HTTP_ERR_INTERNAL:
-                ERRPRINTF("error while receiving request: %s\n", strerror(errno));
-                cleanup_exit(EXIT_FAILURE);
-            case HTTP_ERR_STREAM:
-                if (feof(conn) != 0) {
-                    ERRPUTS("error while receiving request: EOF reached");
-                    break;
-                }
-                ERRPRINTF("error while receiving request: %s\n", strerror(ferror(conn)));
-                cleanup_exit(EXIT_FAILURE);
-            case HTTP_ERR_PROTOCOL:
-                ERRPUTS("malformed request received");
-                // TODO: Send error response
-                break;
-            default:
-                ERRPRINTF("error while receiving request: unknown error: %u\n", ret);
-                cleanup_exit(EXIT_FAILURE);
-            }
-        } else {
-            printf("Request: %s %s\n", req->method, req->file_path);
-        }
+        handle_request(conn);
 
-        
-        fclose(conn);
-        conn = NULL;
+        if(fclose(conn) != 0) {
+            ERRPRINTF("fclose conn failed: %s\n", strerror(errno));
+            cleanup_exit(EXIT_FAILURE);
+        }
     }
     printf("Signal caught, exiting.\n");
 }
 
-static void handle_http_err(int err, char *cause) {
-    
+static void handle_request(FILE *conn) {
+    http_frame_t *req;
+    int ret = http_recv_req(conn, &req);
+    if(ret != HTTP_SUCCESS) {
+        switch(ret) {
+        case HTTP_ERR_INTERNAL:
+            ERRPRINTF("error while receiving request: %s\n", strerror(errno));
+            fclose(conn);
+            cleanup_exit(EXIT_FAILURE);
+        case HTTP_ERR_STREAM:
+            if (feof(conn) != 0) {
+                ERRPUTS("error while receiving request: EOF reached");
+                break;
+            }
+            ERRPRINTF("error while receiving request: %s\n", strerror(ferror(conn)));
+            fclose(conn);
+            cleanup_exit(EXIT_FAILURE);
+        case HTTP_ERR_PROTOCOL:
+            ERRPUTS("malformed request received");
+            // TODO: Send error response
+            break;
+        default:
+            ERRPRINTF("error while receiving request: unknown error: %u\n", ret);
+            fclose(conn);
+            cleanup_exit(EXIT_FAILURE);
+        }
+    } else {
+        // TODO: Send response
+        printf("Request: %s %s\n", req->method, req->file_path);
+    }
 }
 
 static void cleanup_exit(int status) {
@@ -174,10 +180,6 @@ static void cleanup_exit(int status) {
 
     if(sockfd >= 0 ) {
         close(sockfd);
-    }
-
-    if(conn != NULL) {
-        fclose(conn);
     }
     exit(status);
 }
