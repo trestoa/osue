@@ -1,9 +1,23 @@
+/**
+ * @file http.h
+ * @author Markus Klein (e11707252@student.tuwien.ac.at)
+ * @brief Contains function and data structures for sending and receiving http messages.
+ * @version 1.0
+ * @date 2018-11-07
+ * @details This module contains functions which essentially implement parts of the 
+ * http protocol and allow users to send and receive http requests and responses.
+ * For storing the data of a http message and passing it between the used and this 
+ * module, the http_frame_t type is used. 
+ * The return values of most functions indicate whether the operation succeeded and 
+ * if not, which type of error occured. For this purpose, functions return a value 
+ * of the http_err_t type. Additionally for stdio stream errors, the http_errval 
+ * variable is set to the stream which caused the error to happen. 
+ */
+
 #ifndef HTTP_H
 #define HTTP_H
 
 #include <stdio.h>
-
-// TODO: document structs
 
 /**
  * @brief Http version.
@@ -29,12 +43,29 @@ typedef enum http_err {
     HTTP_ERR_PROTOCOL = 4
 } http_err_t;
 
+/**
+ * @brief Struct for storing data of a single header field.
+ * @details This is a helper structure for http_frame_t and contains the data
+ * for a single header field where name contains the left part of the header 
+ * and value the right path (the serialization to the http header string would
+ * be "<name>: <value>"). In addition to that, it contains a pointer to a potential
+ * next header field. 
+ */
 typedef struct http_header {
     char *name;
     char *value;
     struct http_header *next;
 } http_header_t;
 
+/**
+ * @brief Stores information about a http message (request or reply).
+ * @details This structure is used for passing around http message data within
+ * the program and in particular between function of the module and the calling
+ * function. It contains fields for both request and response messages, where some 
+ * field are request only (method, file_path) and some are response only 
+ * (status, status_text). Headers are stored as a linked list of http_header_t 
+ * pointers. 
+ */
 typedef struct http_frame {
     long int status; // Response only
     char *status_text; // Response only
@@ -46,10 +77,16 @@ typedef struct http_frame {
     http_header_t *header_first;
 
     long int body_len;
-
-    void *body; // Response only
+    void *body;
 } http_frame_t;
 
+/**
+ * @brief Error variable used to indicated error causes 
+ * (in particular, streams that caused an error).
+ * @details This global variable is used to indicate methods the cause of
+ * errors by pointing (corrently only, but generally not limited) to streams
+ * where the error occured. 
+ */
 extern void *http_errvar;
 
 /**
@@ -107,8 +144,37 @@ void http_free_frame(http_frame_t *frame);
  */
 http_err_t http_send_req(FILE* sock, http_frame_t *req);
 
-http_err_t http_send_res(FILE* sock, http_frame_t *res, FILE *body);
+/**
+ * @brief Send a http reponse.
+ * 
+ * @param sock Socket where the response will be sent to. 
+ * @param res Http frame which describes the response.
+ * @param body Stdio stream where the body will be read from. 
+ * @return http_err_t HTTP_SUCCESS if the request was successfully sent and a error value 
+ * as defined in http_err_t otherwise.
+ * 
+ * @details Sends a http response with the status code res->status and res->status_text
+ * to sock, containing all headers in the linked list beginning with res->header_first
+ * and, if != NULL, the request body res->body. All headers (especially)
+ * the Content-Length must be already set correctly. 
+ * A res->body_len of -1 indicates that the stream should be read until EOF.
+ */
+http_err_t http_send_res(FILE* sock, http_frame_t *res);
 
+/**
+ * @brief Receive a http request from the given socket.
+ * 
+ * @param sock Socket where the request should be read from.
+ * @param req Pointer where the address of the http request frame will be stored. 
+ * @return http_err_t HTTP_SUCCESS if the request was successfully received and a 
+ * error value as defined in http_err_t otherwise. 
+ * 
+ * @details Reads an http request from sock and stores that request data in a newly 
+ * allocated http_frame_t struct. This function does not support request bodies and 
+ * will also not consider the Content-Length header and drop the request body from
+ * the stream. Requests with request bodies will therefore leave the body unread
+ * on the stream.
+ */
 http_err_t http_recv_req(FILE* sock, http_frame_t **req);
 
 /**
