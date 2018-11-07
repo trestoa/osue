@@ -188,9 +188,11 @@ static void open_out_file(void) {
         }
 
         if((out = fopen(path, "w")) == NULL) {
+            free(path);
             ERRPRINTF("fopen on %s failed: %s\n", path, strerror(errno));
             cleanup_exit(EXIT_FAILURE);
         }
+        free(path);
     }
 }
 
