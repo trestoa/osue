@@ -184,19 +184,23 @@ static void handle_request(FILE *conn) {
         case HTTP_ERR_INTERNAL:
             ERRPRINTF("error while receiving request: %s\n", strerror(errno));
             fclose(conn);
+            http_free_frame(req);
             cleanup_exit(EXIT_FAILURE);
         case HTTP_ERR_STREAM:
             ERRPRINTF("error while receiving request: %s\n", strerror(ferror(http_errvar)));
+            http_free_frame(req);
             return;
         case HTTP_ERR_PROTOCOL:
             ERRPUTS("malformed request received");
             res.status = 400;
             res.status_text = "Bad Request";
             http_send_res(conn, &res, NULL);
+            http_free_frame(req);
             return;
         default:
             ERRPRINTF("error while receiving request: unknown error: %u\n", ret);
             fclose(conn);
+            http_free_frame(req);
             cleanup_exit(EXIT_FAILURE);
         }
     }
@@ -207,6 +211,7 @@ static void handle_request(FILE *conn) {
         res.status = 501;
         res.status_text = "Not Implemented";
         send_res(&res, NULL);
+        http_free_frame(req);
         return;
     }
 
@@ -220,66 +225,74 @@ static void handle_request(FILE *conn) {
             res.status = 404;
             res.status_text = "Not Found";
             send_res(&res, NULL);
+            http_free_frame(req);
             return;
         }
 
         ERRPRINTF("fopen on %s failed: %s\n", file_path, strerror(errno));
+        free(file_path);
+        
         res.status = 500;
         res.status_text = "Internal Server Error";
         send_res(&res, NULL);
+        http_free_frame(req);
         return;
-    } else {
-        if(fseek(body, 0L, SEEK_END) != 0) {
-            ERRPRINTF("fseek on %s failed: %s\n", file_path, strerror(errno));
-            if(fclose(body) != 0) {
-                ERRPRINTF("fclose on %s failed: %s\n", file_path, strerror(errno));
-            }
-            free(file_path);
-            
-            res.status = 500;
-            res.status_text = "Internal Server Error";
-            send_res(&res, NULL);
-            return;
-        }
-        int file_len = ftell(body);
-        // With a 64 bit integer, 21 characters are needed at most
-        char file_len_str[21];
-        snprintf(file_len_str, sizeof(file_len_str), "%u", file_len);
-        if(file_len < 0) {
-            ERRPRINTF("ftell on %s failed: %s\n", file_path, strerror(errno));
-            if(fclose(body) != 0) {
-                ERRPRINTF("fclose on %s failed: %s\n", file_path, strerror(errno));
-            }
-            free(file_path);
-            
-            res.status = 500;
-            res.status_text = "Internal Server Error";
-            send_res(&res, NULL);
-            return;
-        }
-        if(fseek(body, 0, SEEK_SET) != 0) {
-            ERRPRINTF("rewind on %s failed: %s\n", file_path, strerror(errno));
-            if(fclose(body) != 0) {
-                ERRPRINTF("fclose on %s failed: %s\n", file_path, strerror(errno));
-            }
-            free(file_path);
-            
-            res.status = 500;
-            res.status_text = "Internal Server Error";
-            send_res(&res, NULL);
-            return;
-        }
+    } 
 
-        http_header_t c_length_header = {"Content-Length", file_len_str, &date_header};
-        res.status = 200;
-        res.status_text = "OK";
-        res.header_first = &c_length_header;
-        send_res(&res, body);
+    if(fseek(body, 0L, SEEK_END) != 0) {
+        ERRPRINTF("fseek on %s failed: %s\n", file_path, strerror(errno));
         if(fclose(body) != 0) {
             ERRPRINTF("fclose on %s failed: %s\n", file_path, strerror(errno));
         }
         free(file_path);
+        
+        res.status = 500;
+        res.status_text = "Internal Server Error";
+        send_res(&res, NULL);
+        http_free_frame(req);
+        return;
     }
+    int file_len = ftell(body);
+    // With a 64 bit integer, 21 characters are needed at most
+    char file_len_str[21];
+    snprintf(file_len_str, sizeof(file_len_str), "%u", file_len);
+    if(file_len < 0) {
+        ERRPRINTF("ftell on %s failed: %s\n", file_path, strerror(errno));
+        if(fclose(body) != 0) {
+            ERRPRINTF("fclose on %s failed: %s\n", file_path, strerror(errno));
+        }
+        free(file_path);
+        
+        res.status = 500;
+        res.status_text = "Internal Server Error";
+        send_res(&res, NULL);
+        http_free_frame(req);
+        return;
+    }
+    if(fseek(body, 0, SEEK_SET) != 0) {
+        ERRPRINTF("rewind on %s failed: %s\n", file_path, strerror(errno));
+        if(fclose(body) != 0) {
+            ERRPRINTF("fclose on %s failed: %s\n", file_path, strerror(errno));
+        }
+        free(file_path);
+        
+        res.status = 500;
+        res.status_text = "Internal Server Error";
+        send_res(&res, NULL);
+        http_free_frame(req);
+        return;
+    }
+
+    http_header_t c_length_header = {"Content-Length", file_len_str, &date_header};
+    res.status = 200;
+    res.status_text = "OK";
+    res.header_first = &c_length_header;
+    send_res(&res, body);
+    if(fclose(body) != 0) {
+        ERRPRINTF("fclose on %s failed: %s\n", file_path, strerror(errno));
+    }
+    http_free_frame(req);
+    free(file_path);
 }
 
 static void send_res(http_frame_t *res, FILE *body) {

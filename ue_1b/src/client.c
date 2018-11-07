@@ -162,6 +162,7 @@ static void open_out_file(void) {
         out = stdout;
     } else {
         char *path;
+        int outfile_alloc = 0;
         if(outfile != NULL) {
             path = outfile;
         } else {
@@ -174,6 +175,7 @@ static void open_out_file(void) {
             // Add 1 additional character
             int path_len = strlen(outdir) + strlen(filename) + (trailing_slash == 1 ? 0 : 1) + 1;
 
+            outfile_alloc = 1;
             path = malloc(path_len * sizeof(*path));
             if(path == NULL) {
                 ERRPRINTF("malloc failed: %s\n", strerror(errno));
@@ -188,11 +190,15 @@ static void open_out_file(void) {
         }
 
         if((out = fopen(path, "w")) == NULL) {
-            free(path);
             ERRPRINTF("fopen on %s failed: %s\n", path, strerror(errno));
+            if(outfile_alloc == 1) {
+                free(path);
+            }
             cleanup_exit(EXIT_FAILURE);
         }
-        free(path);
+        if(outfile_alloc == 1) {
+            free(path);
+        }
     }
 }
 
