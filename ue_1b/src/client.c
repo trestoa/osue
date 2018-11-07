@@ -1,4 +1,13 @@
-// TODO: Documentation
+/**
+ * @file client.c
+ * @author Markus Klein (e11707252@student.tuwien.ac.at)
+ * @brief 
+ * @version 1.0
+ * @date 2018-11-07
+ * 
+ * 
+ */
+
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -18,7 +27,7 @@
 static char *progname;
 
 // These are all pointers to non allocated memory space -> no free needed.
-static char *service = "http", 
+static char *port = "http", 
      *outdir = NULL, 
      *outfile = NULL;
 
@@ -49,7 +58,7 @@ int main(int argc, char **argv) {
     while((c = getopt(argc, argv, "p:o:d:")) != -1) {
         switch(c) {
         case 'p':
-            service = optarg;
+            port = optarg;
             break;
         case 'o':
             outfile = optarg;
@@ -97,7 +106,7 @@ static void connect_to_server(void) {
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
-    int res = getaddrinfo(hostname, service, &hints, &ai);
+    int res = getaddrinfo(hostname, port, &hints, &ai);
     if(res != 0) {
         ERRPRINTF("getaddrinfo failed: %s\n", gai_strerror(res));
         cleanup_exit(EXIT_FAILURE);
