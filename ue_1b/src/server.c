@@ -21,6 +21,7 @@ static volatile sig_atomic_t quit = 0;
 
 static struct addrinfo *ai = NULL;
 static int sockfd = -1;
+static FILE *conn = NULL;
 
 static void usage(void);
 
@@ -31,6 +32,8 @@ static void cleanup_exit(int status);
 static void handle_signal(int signal);
 
 static void run_server(void);
+
+static char *get_file_path(char *req_path);
 
 static void handle_request(FILE *conn);
 
@@ -117,7 +120,6 @@ static void open_socket(char *port) {
 
 static void run_server(void) {
     int connfd;
-    FILE *conn;
     while(!quit) {
         connfd = accept(sockfd, NULL, NULL);
         if(connfd < 0) {
@@ -138,6 +140,7 @@ static void run_server(void) {
             ERRPRINTF("fclose conn failed: %s\n", strerror(errno));
             cleanup_exit(EXIT_FAILURE);
         }
+        conn = NULL;
     }
     printf("Signal caught, exiting.\n");
 }
@@ -195,40 +198,13 @@ static void handle_request(FILE *conn) {
             cleanup_exit(EXIT_FAILURE);
         }
     } else {
-        // TODO: case insensitive?
-        if(strcmp(req->method, "GET") != 0) {
+        if(strcasecmp(req->method, "GET") != 0) {
             res.status = 501;
             res.status_text = "Not Implemented";
             http_send_res(conn, &res, NULL);
         } else {
+            char *file_path = get_file_path(req->file_path);
             // Add one character for null byte
-            int docroot_trailing_slash = docroot[strlen(docroot)-1] == '/';
-            
-            int path_len = strlen(req->file_path) + strlen(docroot) + 1;
-            int add_index = req->file_path[strlen(req->file_path)-1] == '/';
-            if(add_index == 1) {
-                path_len += strlen(index_file);
-            }
-            if(docroot_trailing_slash == 1) {
-                path_len++;
-            }
-
-            char *file_path = malloc(path_len);
-            if(file_path == NULL) {
-                ERRPRINTF("malloc failed: %s\n", strerror(errno));
-                fclose(conn);
-                cleanup_exit(EXIT_FAILURE);
-            }
-
-            if(docroot_trailing_slash == 1) {
-                snprintf(file_path, path_len, "%s/%s", docroot, req->file_path);
-            } else {
-                snprintf(file_path, path_len, "%s%s", docroot, req->file_path);
-            }
-            if(add_index == 1) {
-                strcat(file_path, index_file);
-            }
-            
             FILE *file;
             if((file = fopen(file_path, "r")) == NULL) {
                 if(errno == ENOENT) {
@@ -241,7 +217,7 @@ static void handle_request(FILE *conn) {
 
             if(fseek(file, 0L, SEEK_END) != 0) {
                 ERRPRINTF("fseek on %s failed: %s\n", file_path, strerror(errno));
-                fclose(conn);
+                free(file_path);
                 cleanup_exit(EXIT_FAILURE);
             }
             int file_len = ftell(file);
@@ -250,12 +226,12 @@ static void handle_request(FILE *conn) {
             snprintf(file_len_str, sizeof(file_len_str), "%u", file_len);
             if(file_len < 0) {
                 ERRPRINTF("ftell on %s failed: %s\n", file_path, strerror(errno));
-                fclose(conn);
+                free(file_path);
                 cleanup_exit(EXIT_FAILURE);
             }
             if(fseek(file, 0, SEEK_SET) != 0) {
                 ERRPRINTF("rewind on %s failed: %s\n", file_path, strerror(errno));
-                fclose(conn);
+                free(file_path);
                 cleanup_exit(EXIT_FAILURE);
             }
 
@@ -266,13 +242,44 @@ static void handle_request(FILE *conn) {
             ret = http_send_res(conn, &res, file);
             if(fclose(file) != 0) {
                 ERRPRINTF("fclose on %s failed: %s\n", file_path, strerror(errno));
-                fclose(conn);
+                free(file_path);
                 cleanup_exit(EXIT_FAILURE);
             }
+            free(file_path);
         }
 
         printf("Request: %s %s\n", req->method, req->file_path);
     }
+}
+
+static char *get_file_path(char *req_path) {
+    int docroot_trailing_slash = docroot[strlen(docroot)-1] == '/';
+            
+    int path_len = strlen(req_path) + strlen(docroot) + 1;
+    int add_index = req_path[strlen(req_path)-1] == '/';
+    if(add_index == 1) {
+        path_len += strlen(index_file);
+    }
+    if(docroot_trailing_slash == 1) {
+        path_len++;
+    }
+
+    char *file_path = malloc(path_len);
+    if(file_path == NULL) {
+        ERRPRINTF("malloc failed: %s\n", strerror(errno));
+        cleanup_exit(EXIT_FAILURE);
+    }
+
+    if(docroot_trailing_slash == 1) {
+        snprintf(file_path, path_len, "%s/%s", docroot, req_path);
+    } else {
+        snprintf(file_path, path_len, "%s%s", docroot, req_path);
+    }
+    if(add_index == 1) {
+        strcat(file_path, index_file);
+    }
+
+    return file_path;
 }
 
 static void cleanup_exit(int status) {
@@ -282,6 +289,10 @@ static void cleanup_exit(int status) {
 
     if(sockfd >= 0 ) {
         close(sockfd);
+    }
+
+    if(conn != NULL) {
+        fclose(conn);
     }
     exit(status);
 }
