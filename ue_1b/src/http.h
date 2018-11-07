@@ -50,6 +50,8 @@ typedef struct http_frame {
     void *body; // Response only
 } http_frame_t;
 
+extern void *http_errvar;
+
 /**
  * @brief Check URL format and extract hostname and file path.
  * 

@@ -6,6 +6,8 @@
 
 #include "http.h"
 
+void *http_errvar = NULL;
+
 static int write_headers(FILE *sock, http_frame_t *res);
 
 static int read_headers(FILE *sock, http_frame_t **res);
@@ -75,6 +77,7 @@ void http_free_frame(http_frame_t *frame) {
 
 int http_send_req(FILE* sock, http_frame_t *req) {
     if(fprintf(sock, "%s %s %s\r\n", req->method, req->file_path, HTTP_VERSION) < 0) {
+        http_errvar = sock;
         return HTTP_ERR_STREAM;
     }
 
@@ -82,6 +85,7 @@ int http_send_req(FILE* sock, http_frame_t *req) {
 
     if(req->body_len != 0) {
         if(fwrite(req->body, 1, req->body_len, sock) != req->body_len) {
+            http_errvar = sock;
             return HTTP_ERR_STREAM;
         }
     }
@@ -93,6 +97,7 @@ int http_send_req(FILE* sock, http_frame_t *req) {
 
 int http_send_res(FILE* sock, http_frame_t *res, FILE *body) {
     if(fprintf(sock, "%s %lu %s\r\n", HTTP_VERSION, res->status, res->status_text) < 0) {
+        http_errvar = sock;
         return HTTP_ERR_STREAM;
     }
 
@@ -215,6 +220,7 @@ static int read_first_line(FILE *sock, char **line, char **first, char **second,
     
     // Read first header line with response status
     if((linelen = getline(line, &linecap, sock)) <= 0) {
+        http_errvar = sock;
         return HTTP_ERR_STREAM;
     }
 
@@ -240,10 +246,12 @@ static int read_first_line(FILE *sock, char **line, char **first, char **second,
 static int write_headers(FILE *sock, http_frame_t *res) {
     for(http_header_t *cur_header = res->header_first; cur_header != NULL; cur_header = cur_header->next) {
         if(fprintf(sock, "%s: %s\r\n", cur_header->name, cur_header->value) < 0) {
+            http_errvar = sock;
             return HTTP_ERR_STREAM;
         }
     }
     if(fputs("\r\n", sock) == EOF) {
+        http_errvar = sock;
         return HTTP_ERR_STREAM;
     }
     return HTTP_SUCCESS;
@@ -261,6 +269,7 @@ static int read_headers(FILE *sock, http_frame_t **res) {
     for(int len = 0; ; last_header = cur_header, len++) {
         if((linelen = getline(&line, &linecap, sock)) <= 0) {
             free(line);
+            http_errvar = sock;
             return HTTP_ERR_STREAM;
         }
 
@@ -337,11 +346,13 @@ static int stream_pipe(FILE *src, FILE *drain, int len) {
             if(len == -1 && feof(src) != 0) {
                 body_remaining = 0;
             } else {
+                http_errvar = src;
                 return HTTP_ERR_STREAM;
             }
         }
 
-        if(fwrite(buf, 1, act_read, drain) != to_read) {
+        if(fwrite(buf, 1, act_read, drain) != act_read) {
+            http_errvar = drain;
             return HTTP_ERR_STREAM;
         }
         

@@ -7,6 +7,7 @@
 #include <string.h>
 #include <time.h>
 #include <libgen.h>
+#include <strings.h>
 
 #include "http.h"
 #include "utils.h"
@@ -36,6 +37,8 @@ static void run_server(void);
 static char *get_file_path(char *req_path);
 
 static void handle_request(FILE *conn);
+
+static void send_res(http_frame_t *res, FILE *body);
 
 int main(int argc, char **argv) {
     char *port = "8080";
@@ -107,6 +110,9 @@ static void open_socket(char *port) {
         cleanup_exit(EXIT_FAILURE);
     }
 
+    int optval = 1;
+    setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof optval);
+
     if(bind(sockfd, ai->ai_addr, ai->ai_addrlen) < 0) {
         ERRPRINTF("bind failed: %s\n", strerror(errno));
         cleanup_exit(EXIT_FAILURE);
@@ -131,14 +137,16 @@ static void run_server(void) {
         }
         if((conn = fdopen(connfd, "w+")) == NULL) {
             ERRPRINTF("fdopen connfd failed: %s\n", strerror(errno));
-            cleanup_exit(EXIT_FAILURE);
+            if(close(connfd) != 0) {
+                ERRPRINTF("close connfd failed: %s\n", strerror(errno));
+            }
+            continue;
         }
 
         handle_request(conn);
 
         if(fclose(conn) != 0) {
             ERRPRINTF("fclose conn failed: %s\n", strerror(errno));
-            cleanup_exit(EXIT_FAILURE);
         }
         conn = NULL;
     }
@@ -146,7 +154,6 @@ static void run_server(void) {
 }
 
 static void handle_request(FILE *conn) {
-    // TODO: error handling: especially for http_send_res calls
     http_frame_t res, *req;
     memset(&res, 0, sizeof(res));
 
@@ -179,13 +186,8 @@ static void handle_request(FILE *conn) {
             fclose(conn);
             cleanup_exit(EXIT_FAILURE);
         case HTTP_ERR_STREAM:
-            if (feof(conn) != 0) {
-                ERRPUTS("error while receiving request: EOF reached");
-                return;
-            }
-            ERRPRINTF("error while receiving request: %s\n", strerror(ferror(conn)));
-            fclose(conn);
-            cleanup_exit(EXIT_FAILURE);
+            ERRPRINTF("error while receiving request: %s\n", strerror(ferror(http_errvar)));
+            return;
         case HTTP_ERR_PROTOCOL:
             ERRPUTS("malformed request received");
             res.status = 400;
@@ -197,58 +199,101 @@ static void handle_request(FILE *conn) {
             fclose(conn);
             cleanup_exit(EXIT_FAILURE);
         }
-    } else {
-        if(strcasecmp(req->method, "GET") != 0) {
-            res.status = 501;
-            res.status_text = "Not Implemented";
-            http_send_res(conn, &res, NULL);
-        } else {
-            char *file_path = get_file_path(req->file_path);
-            // Add one character for null byte
-            FILE *file;
-            if((file = fopen(file_path, "r")) == NULL) {
-                if(errno == ENOENT) {
-                    res.status = 404;
-                    res.status_text = "Not Found";
-                    http_send_res(conn, &res, NULL);
-                    return;
-                }
-            }
+    }
 
-            if(fseek(file, 0L, SEEK_END) != 0) {
-                ERRPRINTF("fseek on %s failed: %s\n", file_path, strerror(errno));
-                free(file_path);
-                cleanup_exit(EXIT_FAILURE);
-            }
-            int file_len = ftell(file);
-            // With a 64 bit integer, 21 characters are needed at most
-            char file_len_str[21];
-            snprintf(file_len_str, sizeof(file_len_str), "%u", file_len);
-            if(file_len < 0) {
-                ERRPRINTF("ftell on %s failed: %s\n", file_path, strerror(errno));
-                free(file_path);
-                cleanup_exit(EXIT_FAILURE);
-            }
-            if(fseek(file, 0, SEEK_SET) != 0) {
-                ERRPRINTF("rewind on %s failed: %s\n", file_path, strerror(errno));
-                free(file_path);
-                cleanup_exit(EXIT_FAILURE);
-            }
+    printf("> %s %s\n", req->method, req->file_path);
 
-            http_header_t c_length_header = {"Content-Length", file_len_str, &date_header};
-            res.status = 200;
-            res.status_text = "OK";
-            res.header_first = &c_length_header;
-            ret = http_send_res(conn, &res, file);
-            if(fclose(file) != 0) {
-                ERRPRINTF("fclose on %s failed: %s\n", file_path, strerror(errno));
-                free(file_path);
-                cleanup_exit(EXIT_FAILURE);
-            }
+    if(strcasecmp(req->method, "GET") != 0) {
+        res.status = 501;
+        res.status_text = "Not Implemented";
+        send_res(&res, NULL);
+        return;
+    }
+
+    FILE *body = NULL;
+    char *file_path = get_file_path(req->file_path);
+    // Add one character for null byte
+    if((body = fopen(file_path, "r")) == NULL) {
+        if(errno == ENOENT) {
             free(file_path);
+
+            res.status = 404;
+            res.status_text = "Not Found";
+            send_res(&res, NULL);
+            return;
         }
 
-        printf("Request: %s %s\n", req->method, req->file_path);
+        ERRPRINTF("fopen on %s failed: %s\n", file_path, strerror(errno));
+        res.status = 500;
+        res.status_text = "Internal Server Error";
+        send_res(&res, NULL);
+        return;
+    } else {
+        if(fseek(body, 0L, SEEK_END) != 0) {
+            ERRPRINTF("fseek on %s failed: %s\n", file_path, strerror(errno));
+            if(fclose(body) != 0) {
+                ERRPRINTF("fclose on %s failed: %s\n", file_path, strerror(errno));
+            }
+            free(file_path);
+            
+            res.status = 500;
+            res.status_text = "Internal Server Error";
+            send_res(&res, NULL);
+            return;
+        }
+        int file_len = ftell(body);
+        // With a 64 bit integer, 21 characters are needed at most
+        char file_len_str[21];
+        snprintf(file_len_str, sizeof(file_len_str), "%u", file_len);
+        if(file_len < 0) {
+            ERRPRINTF("ftell on %s failed: %s\n", file_path, strerror(errno));
+            if(fclose(body) != 0) {
+                ERRPRINTF("fclose on %s failed: %s\n", file_path, strerror(errno));
+            }
+            free(file_path);
+            
+            res.status = 500;
+            res.status_text = "Internal Server Error";
+            send_res(&res, NULL);
+            return;
+        }
+        if(fseek(body, 0, SEEK_SET) != 0) {
+            ERRPRINTF("rewind on %s failed: %s\n", file_path, strerror(errno));
+            if(fclose(body) != 0) {
+                ERRPRINTF("fclose on %s failed: %s\n", file_path, strerror(errno));
+            }
+            free(file_path);
+            
+            res.status = 500;
+            res.status_text = "Internal Server Error";
+            send_res(&res, NULL);
+            return;
+        }
+
+        http_header_t c_length_header = {"Content-Length", file_len_str, &date_header};
+        res.status = 200;
+        res.status_text = "OK";
+        res.header_first = &c_length_header;
+        send_res(&res, body);
+        if(fclose(body) != 0) {
+            ERRPRINTF("fclose on %s failed: %s\n", file_path, strerror(errno));
+        }
+        free(file_path);
+    }
+}
+
+static void send_res(http_frame_t *res, FILE *body) {
+    printf("< %lu %s\n", res->status, res->status_text);
+    int ret = http_send_res(conn, res, body);
+    if(ret != HTTP_SUCCESS) {
+        switch(ret) {
+        case HTTP_ERR_STREAM:
+            ERRPRINTF("error while sending response: %s\n", strerror(ferror(http_errvar)));
+            break;
+        default:
+            ERRPRINTF("error while sending response: unknown error: %u\n", ret);
+            cleanup_exit(EXIT_FAILURE);
+        }
     }
 }
 
