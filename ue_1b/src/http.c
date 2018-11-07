@@ -69,6 +69,9 @@ void http_free_frame(http_frame_t *frame) {
     while(cur_header != NULL) {
         last_header = cur_header;
         cur_header = cur_header->next;
+        free(last_header->name);
+        free(last_header->value);
+        free(last_header->next);
         free(last_header);
     }
 
