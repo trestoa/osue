@@ -1,3 +1,13 @@
+/**
+ * @file http.c
+ * @author Markus Klein (e11707252@student.tuwien.ac.at)
+ * @brief 
+ * @version 1.0
+ * @date 2018-11-07
+ * 
+ * 
+ */
+
 #include <string.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -8,15 +18,15 @@
 
 void *http_errvar = NULL;
 
-static int write_headers(FILE *sock, http_frame_t *res);
+static http_err_t write_headers(FILE *sock, http_frame_t *res);
 
-static int read_headers(FILE *sock, http_frame_t **res);
+static http_err_t read_headers(FILE *sock, http_frame_t **res);
 
-static int read_first_line(FILE *sock, char **line, char **first, char **second, char **third);
+static http_err_t read_first_line(FILE *sock, char **line, char **first, char **second, char **third);
 
-static int stream_pipe(FILE *src, FILE *drain, int len);
+static http_err_t stream_pipe(FILE *src, FILE *drain, int len);
 
-int parse_url(char *url, char **hostname, char **file_path) {
+http_err_t parse_url(char *url, char **hostname, char **file_path) {
     // 7 == length of "http://"
     if(strncmp(url, "http://", 7) != 0) {
         return HTTP_ERR_URL_FORMAT;
@@ -50,7 +60,7 @@ int parse_url(char *url, char **hostname, char **file_path) {
     return HTTP_SUCCESS;
 }
 
-int http_frame(http_frame_t **frame) {
+http_err_t http_frame(http_frame_t **frame) {
     *frame = malloc(sizeof(http_frame_t));
     if(*frame == NULL) {
         return HTTP_ERR_INTERNAL;
@@ -77,7 +87,7 @@ void http_free_frame(http_frame_t *frame) {
     free(frame);
 }
 
-int http_send_req(FILE* sock, http_frame_t *req) {
+http_err_t http_send_req(FILE* sock, http_frame_t *req) {
     if(fprintf(sock, "%s %s %s\r\n", req->method, req->file_path, HTTP_VERSION) < 0) {
         http_errvar = sock;
         return HTTP_ERR_STREAM;
@@ -97,7 +107,7 @@ int http_send_req(FILE* sock, http_frame_t *req) {
     return HTTP_SUCCESS;
 }
 
-int http_send_res(FILE* sock, http_frame_t *res, FILE *body) {
+http_err_t http_send_res(FILE* sock, http_frame_t *res, FILE *body) {
     if(fprintf(sock, "%s %lu %s\r\n", HTTP_VERSION, res->status, res->status_text) < 0) {
         http_errvar = sock;
         return HTTP_ERR_STREAM;
@@ -115,7 +125,7 @@ int http_send_res(FILE* sock, http_frame_t *res, FILE *body) {
     return HTTP_SUCCESS;
 }
 
-int http_recv_res(FILE *sock, http_frame_t **res, FILE *out) {
+http_err_t http_recv_res(FILE *sock, http_frame_t **res, FILE *out) {
     int ret = http_frame(res);
     if(ret != HTTP_SUCCESS){
         return ret;
@@ -173,7 +183,7 @@ int http_recv_res(FILE *sock, http_frame_t **res, FILE *out) {
     return HTTP_SUCCESS;
 }
 
-int http_recv_req(FILE* sock, http_frame_t **req) {
+http_err_t http_recv_req(FILE* sock, http_frame_t **req) {
     int ret = http_frame(req);
     if(ret != HTTP_SUCCESS){
         return ret;
@@ -216,7 +226,7 @@ int http_recv_req(FILE* sock, http_frame_t **req) {
     return HTTP_SUCCESS;
 }
 
-static int read_first_line(FILE *sock, char **line, char **first, char **second, char **third) {
+static http_err_t read_first_line(FILE *sock, char **line, char **first, char **second, char **third) {
     size_t linecap = 0;
     ssize_t linelen;
     
@@ -245,7 +255,7 @@ static int read_first_line(FILE *sock, char **line, char **first, char **second,
     return HTTP_SUCCESS;
 }
 
-static int write_headers(FILE *sock, http_frame_t *res) {
+static http_err_t write_headers(FILE *sock, http_frame_t *res) {
     for(http_header_t *cur_header = res->header_first; cur_header != NULL; cur_header = cur_header->next) {
         if(fprintf(sock, "%s: %s\r\n", cur_header->name, cur_header->value) < 0) {
             http_errvar = sock;
@@ -259,7 +269,7 @@ static int write_headers(FILE *sock, http_frame_t *res) {
     return HTTP_SUCCESS;
 }
 
-static int read_headers(FILE *sock, http_frame_t **res) {
+static http_err_t read_headers(FILE *sock, http_frame_t **res) {
     char *line = NULL;
     size_t linecap = 0;
     ssize_t linelen;
@@ -332,7 +342,7 @@ static int read_headers(FILE *sock, http_frame_t **res) {
     return HTTP_SUCCESS;
 }
 
-static int stream_pipe(FILE *src, FILE *drain, int len) {
+static http_err_t stream_pipe(FILE *src, FILE *drain, int len) {
     char buf[1024];
     memset(buf, 0, sizeof(buf));
     int to_read, act_read, body_remaining;

@@ -66,7 +66,7 @@ extern void *http_errvar;
  * successfully. Returns HTTP_SUCCESS if successful and a respective error 
  * code of the http_err_t enum otherwise.
  */
-int parse_url(char *url, char **hostname, char **file_path);
+http_err_t parse_url(char *url, char **hostname, char **file_path);
 
 /**
  * @brief Initialize a new http_frame_t on the heap.
@@ -78,7 +78,7 @@ int parse_url(char *url, char **hostname, char **file_path);
  * @details Allocates heap space for a http_frame_t object and initializes all values with 0.
  * The address to the frame will be stored to the given pointer.
  */
-int http_frame(http_frame_t **frame);
+http_err_t http_frame(http_frame_t **frame);
 
 /**
  * @brief Frees a dynamically allocated http frame object.
@@ -105,11 +105,11 @@ void http_free_frame(http_frame_t *frame);
  * req->content_len > 0 the request body req->body. All headers (especially)
  * the Content-Length must be already set correctly. 
  */
-int http_send_req(FILE* sock, http_frame_t *req);
+http_err_t http_send_req(FILE* sock, http_frame_t *req);
 
-int http_send_res(FILE* sock, http_frame_t *res, FILE *body);
+http_err_t http_send_res(FILE* sock, http_frame_t *res, FILE *body);
 
-int http_recv_req(FILE* sock, http_frame_t **req);
+http_err_t http_recv_req(FILE* sock, http_frame_t **req);
 
 /**
  * @brief Receive a http response from the given socket.
@@ -127,6 +127,6 @@ int http_recv_req(FILE* sock, http_frame_t **req);
  * returns and the response frame will not be used further, http_free_frame should be
  * called manually. 
  */
-int http_recv_res(FILE *sock, http_frame_t **res, FILE *out);
+http_err_t http_recv_res(FILE *sock, http_frame_t **res, FILE *out);
 
 #endif
