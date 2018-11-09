@@ -134,13 +134,14 @@ void http_free_frame(http_frame_t *frame);
  * 
  * @param sock Socket where the request will be sent to. 
  * @param req Http frame which describes the request.
- * @return int HTTP_SUCCESS if the request was successfully sent and a error value 
+ * @return int HTTP_SUCCESS if the request was successfully sent and an error value 
  * as defined in http_err_t otherwise.
  * 
  * @details Sends a http request with the method req->method to sock, containing
  * all headers in the linked list beginning with req->header_first and, if 
  * req->content_len > 0 the request body req->body. All headers (especially)
  * the Content-Length must be already set correctly. 
+ * Global variables: http_errvar.
  */
 http_err_t http_send_req(FILE* sock, http_frame_t *req);
 
@@ -150,7 +151,7 @@ http_err_t http_send_req(FILE* sock, http_frame_t *req);
  * @param sock Socket where the response will be sent to. 
  * @param res Http frame which describes the response.
  * @param body Stdio stream where the body will be read from. 
- * @return http_err_t HTTP_SUCCESS if the request was successfully sent and a error value 
+ * @return http_err_t HTTP_SUCCESS if the request was successfully sent and an error value 
  * as defined in http_err_t otherwise.
  * 
  * @details Sends a http response with the status code res->status and res->status_text
@@ -158,6 +159,7 @@ http_err_t http_send_req(FILE* sock, http_frame_t *req);
  * and, if != NULL, the request body res->body. All headers (especially)
  * the Content-Length must be already set correctly. 
  * A res->body_len of -1 indicates that the stream should be read until EOF.
+ * Global variables: http_errvar.
  */
 http_err_t http_send_res(FILE* sock, http_frame_t *res);
 
@@ -166,7 +168,7 @@ http_err_t http_send_res(FILE* sock, http_frame_t *res);
  * 
  * @param sock Socket where the request should be read from.
  * @param req Pointer where the address of the http request frame will be stored. 
- * @return http_err_t HTTP_SUCCESS if the request was successfully received and a 
+ * @return http_err_t HTTP_SUCCESS if the request was successfully received and an 
  * error value as defined in http_err_t otherwise. 
  * 
  * @details Reads an http request from sock and stores that request data in a newly 
@@ -174,6 +176,7 @@ http_err_t http_send_res(FILE* sock, http_frame_t *res);
  * will also not consider the Content-Length header and drop the request body from
  * the stream. Requests with request bodies will therefore leave the body unread
  * on the stream.
+ * Global variables: http_errvar.
  */
 http_err_t http_recv_req(FILE* sock, http_frame_t **req);
 
@@ -183,7 +186,7 @@ http_err_t http_recv_req(FILE* sock, http_frame_t **req);
  * @param sock Socket where the response should be read from.
  * @param res Pointer where the address of the http response frame will be stored. 
  * @param out Output stream where the response body will be written to. 
- * @return int HTTP_SUCCESS if the response was successfully received and a 
+ * @return int HTTP_SUCCESS if the response was successfully received and an 
  * error value as defined in http_err_t otherwise. 
  *  
  * @details Reads an http response from sock. If the response status == 200, it will
@@ -192,6 +195,7 @@ http_err_t http_recv_req(FILE* sock, http_frame_t **req);
  * contain relevant debugging information. Thus, if res != NULL after the function 
  * returns and the response frame will not be used further, http_free_frame should be
  * called manually. 
+ * Global variables: http_errvar.
  */
 http_err_t http_recv_res(FILE *sock, http_frame_t **res, FILE *out);
 

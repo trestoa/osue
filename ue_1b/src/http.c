@@ -1,11 +1,13 @@
 /**
  * @file http.c
  * @author Markus Klein (e11707252@student.tuwien.ac.at)
- * @brief 
+ * @brief Implementation of the http functions defined in http.h
  * @version 1.0
  * @date 2018-11-07
- * 
- * 
+ * @details This module contains the implementation of the function defined in http.h.
+ * As reading requests/responses and writing requests/responses have a lot in common 
+ * most of the code (such as for reading headers, piping body between socket and files)
+ *  is abstracted into common static functions.
  */
 
 #include <string.h>
@@ -18,13 +20,86 @@
 
 void *http_errvar = NULL;
 
+/**
+ * @brief Writes http headers.
+ * 
+ * @param sock Stdio stream where the headers should be serialized to.
+ * @param res Http frame containing the headers.
+ * @return http_err_t HTTP_SUCCESS if writing the headers was successful, and an 
+ * error value as defined in http_err_t otherwise. 
+ * 
+ * @details Writes a linked list (starting with res->header_first) of headers 
+ * fields (objects of http_header_t) to the given stdio stream. Each header 
+ * will be written as single line ending with "\r\n". After all headers were 
+ * written, the end header part of the http message will be indicated with an
+ * empty line "\r\n".
+ * Global variables: http_errvar.
+ */
 static http_err_t write_headers(FILE *sock, http_frame_t *res);
 
+/**
+ * @brief Reads headers from stream.
+ * 
+ * @param sock Stdio stream where the headers should be read from.
+ * @param res Http frame where the start of the header list show be stored to.
+ * @return http_err_t HTTP_SUCCESS if reading the headers was successful, and an 
+ * error value as defined in http_err_t otherwise.
+ * 
+ * @details This is the reverse function of write_headers and reads all header
+ * fields of a http message from the given stream into a linked list of dynamically
+ * allocated http_header_t objects. A pointer to the first field will be stored to
+ * res->header_first.
+ * Global variables: http_errvar.
+ */
 static http_err_t read_headers(FILE *sock, http_frame_t **res);
 
+/**
+ * @brief Reads the three tokens of the first line of an http message.
+ * 
+ * @param sock Stream where the line should be read from.
+ * @param line Pointer where the line pointer should be written to.
+ * @param first Pointer where the pointer to the first token shoud be written to.
+ * @param second Pointer where the pointer to the second token shoud be written to.
+ * @param third Pointer where the pointer to the third token shoud be written to.
+ * @return http_err_t http_err_t HTTP_SUCCESS if reading the tokens was successful, and an 
+ * error value as defined in http_err_t otherwise.
+ * 
+ * @details Extracts three space separated tokens (the last token will 
+ * contain the remaining line) from the given stream and stores the token pointer
+ * to the given addresses. Line will pointer to the begin of the allocated memory space.
+ * Global variables: http_errvar.
+ */
 static http_err_t read_first_line(FILE *sock, char **line, char **first, char **second, char **third);
 
+/**
+ * @brief Pipes the src to drain.
+ * 
+ * @param src Source of the data pipe.
+ * @param drain Drain of the data pipe.
+ * @param len Number of characters to be read from src and written to drain. The value
+ * -1 indicates that the operation should last until EOF of src is reached.
+ * @return http_err_t HTTP_SUCCESS if the pipe operation was successful, and an 
+ * error value as defined in http_err_t otherwise.
+ * 
+ * @details Continously reads a block of data (up to 1024 bytes at a time) from src and
+ * writes it to drain. Used for sending and receiving request/response body.
+ * Global variables: http_errvar.
+ */
 static http_err_t stream_pipe(FILE *src, FILE *drain, int len);
+
+/**
+ * @brief Helper function for reading the remaining request if a protocol error occured
+ * while parsing a request.
+ * 
+ * @param sock Stream where the request was sent to. 
+ * @return http_err_t HTTP_SUCCESS if the operation was successfull and HTTP_ERR_STREAM
+ * if an IO error occured will reading.
+ * 
+ * @details Reads the remaining part of a request (reads until a empty line "\r\n" is 
+ * encountered) without performing any action on the received data. 
+ * Global variables: http_errvar.
+ */
+static http_err_t skip_msg(FILE *sock);
 
 http_err_t parse_url(char *url, char **hostname, char **file_path) {
     // 7 == length of "http://"
@@ -107,7 +182,7 @@ http_err_t http_send_req(FILE* sock, http_frame_t *req) {
     return HTTP_SUCCESS;
 }
 
-http_err_t http_send_res(FILE* sock, http_frame_t *res, FILE *body) {
+http_err_t http_send_res(FILE* sock, http_frame_t *res) {
     if(fprintf(sock, "%s %lu %s\r\n", HTTP_VERSION, res->status, res->status_text) < 0) {
         http_errvar = sock;
         return HTTP_ERR_STREAM;
@@ -115,8 +190,8 @@ http_err_t http_send_res(FILE* sock, http_frame_t *res, FILE *body) {
 
     write_headers(sock, res);
 
-    if(body != NULL) {
-        int ret = stream_pipe(body, sock, -1);
+    if(res->body != NULL) {
+        int ret = stream_pipe(res->body, sock, res->body_len);
         if(ret != HTTP_SUCCESS) {
             return ret;
         }
@@ -201,6 +276,9 @@ http_err_t http_recv_req(FILE* sock, http_frame_t **req) {
     // Check http version
     if(strcmp(http_version, HTTP_VERSION) != 0) {
         free(first_line);
+        if((ret = skip_msg(sock)) != HTTP_SUCCESS) {
+            return ret;
+        }
         return HTTP_ERR_PROTOCOL;
     }
     // Save method and file path
@@ -219,6 +297,12 @@ http_err_t http_recv_req(FILE* sock, http_frame_t **req) {
     // Read headers
     ret = read_headers(sock, req);
     if(ret != HTTP_SUCCESS){
+        if(ret == HTTP_ERR_PROTOCOL) {
+            int skip_ret;
+            if((skip_ret = skip_msg(sock)) != HTTP_SUCCESS) {
+                return skip_ret;
+            }
+        }
         return ret;
     }
 
@@ -374,5 +458,22 @@ static http_err_t stream_pipe(FILE *src, FILE *drain, int len) {
     }
 
     fflush(drain);
+    return HTTP_SUCCESS;
+}
+
+static http_err_t skip_msg(FILE *sock) {
+    char *line = NULL;
+    size_t linecap = 0;
+    ssize_t linelen;
+
+    while(strcmp(line, "\r\n") != 0) {
+        if((linelen = getline(&line, &linecap, sock)) <= 0) {
+            free(line);
+            http_errvar = sock;
+            return HTTP_ERR_STREAM;
+        }
+    }
+
+    free(line);
     return HTTP_SUCCESS;
 }
