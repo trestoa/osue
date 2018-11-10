@@ -27,35 +27,143 @@
 #define SEND_ERR_RES(s, st) \
     res.status = s; \
     res.status_text = st; \
-    send_res(&res); \
+    send_res(&res, conn); \
     http_free_frame(req);
 
+/**
+ * @brief Program name.
+ * @details Name of the executable used for usage and error messages.
+ */
 static char *progname;
 
-static char *docroot, *index_file = "index.html";
+/**
+ * @brief Path to document root.
+ * @details Path to the document root of the webserver, this path will be prepended
+ * to request file path's.
+ */
+static char *docroot;
 
+/**
+ * @brief Index file name.
+ * @details If the client requests a directory (request path ends with "/"), the
+ * index file name will be appended to the request path.
+ */
+static char *index_file = "index.html";
+
+/**
+ * @brief Flag denoting whether the program should be terminated.
+ * @details This variable is used by the signal handlers to indicated that a signal
+ * was caught and the program should be terminated after the current request
+ * has been handled. 
+ */
 static volatile sig_atomic_t quit = 0;
 
-static struct addrinfo *ai = NULL;
+/**
+ * @brief File descriptor for the server socket.
+ * @details -1 if not open
+ */
 static int sockfd = -1;
-static FILE *conn = NULL;
 
+/**
+ * Print usage. 
+ * @brief Prints synopsis of the http server program.
+ * 
+ * @details Prints the usage message of the server on sterr and 
+ * terminates the program with EXIT_FAILURE.
+ * Global variables: progname.
+ */
 static void usage(void);
 
+/**
+ * @brief Sets up the server socket.
+ * 
+ * @param port Port on which the server should be started.
+ * 
+ * @details Opens a passive socket, binds it to the given port and start listening
+ * on the socket. The file descriptor of the socket is stored to sockfd. 
+ */
 static void open_socket(char *port);
 
+/**
+ * Cleanup and terminate.
+ * @brief Free allocated memory, close open streams and terminate program with the
+ * given status code.
+ * 
+ * @param status Returns status of the program.
+ * 
+ * @details Closes open file streams (pointers != NULL) and exits the program using 
+ * exit(), returning the given status.
+ */
 static void cleanup_exit(int status);
 
+/**
+ * @brief Signal handler for SIGINT and SIGTERM.
+ * 
+ * @param signal Caught signal.
+ * 
+ * @details Signal handler. Initiates the termination of the program by setting
+ * the quit flag. The server will finish handling the current request (if there is any)
+ * and terminate afterwards.
+ */
 static void handle_signal(int signal);
 
+/**
+ * @brief Contains the main loop for the server.
+ * @details Continuously accept client and handle their requests (via the 
+ * handle_request function). 
+ */
 static void run_server(void);
 
-static char *get_file_path(char *req_path);
-
+/**
+ * @brief Handle a single client request.
+ * 
+ * @param conn Client connection stream.
+ * 
+ * @details Receives a request from a client and tries to reply the requested file.
+ * In addition to the error behavior defined in the exercise description (404 if file 
+ * not found, 501 if method not supported) this function implements the following error
+ * handling procedures:
+ * - Close the socket without sending a reply if a stream error on the client connection occurs.
+ * - Terminate the server if a memory allocation error (or a different unexpected error) occurs.
+ * - Reply with an 500 internal server error otherwise (e.g. request file failed to open).
+ */
 static void handle_request(FILE *conn);
 
-static void send_res(http_frame_t *res);
+/**
+ * @brief Get the file path for a given requested file
+ * 
+ * @param req_path Request path from the http request (must start with a slash)
+ * @return char* File path to the requested file.
+ * 
+ * @details Contains the document root with the requests file path and appends the 
+ * index file name if the requested file ends with a slash. The returns values is a
+ * pointer to a dynamically allocated memory space and therefore needs to be freed.
+ */
+static char *get_file_path(char *req_path);
 
+/**
+ * @brief Helper function for sending a reponse to the client.
+ * 
+ * @param res Response http frame which should be sent.
+ * @param conn Client connection stream.
+ * 
+ * @details Wraps http_send_res and implementes error handling for the function.
+ */
+static void send_res(http_frame_t *res, FILE *conn);
+
+/**
+ * @brief Main method for the http server. Parses the command line arguments,
+ * intializes signal handling and calls the main server function.
+ * 
+ * @param argc Argument counter.
+ * @param argv Argument vector.
+ * @return int Program exit code (EXIT_SUCCESS)
+ * 
+ * @details Reads the command line arguments via getopt and checks for the correct 
+ * number of arguments. If the argument count and provided options are correct, signal
+ * for SIGINT and SIGTERM are set up and the run_server function with the main loop 
+ * is called.
+ */
 int main(int argc, char **argv) {
     char *port = "8080";
     progname = argv[0];
@@ -108,7 +216,7 @@ static void handle_signal(int signal) {
 }
 
 static void open_socket(char *port) {
-    struct addrinfo hints;
+    struct addrinfo hints, *ai;
     memset(&hints, 0, sizeof hints);
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
@@ -122,6 +230,7 @@ static void open_socket(char *port) {
 
     sockfd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
     if(sockfd < 0) {
+        freeaddrinfo(ai);
         ERRPRINTF("socket failed: %s\n", strerror(errno));
         cleanup_exit(EXIT_FAILURE);
     }
@@ -130,9 +239,11 @@ static void open_socket(char *port) {
     setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof optval);
 
     if(bind(sockfd, ai->ai_addr, ai->ai_addrlen) < 0) {
+        freeaddrinfo(ai);
         ERRPRINTF("bind failed: %s\n", strerror(errno));
         cleanup_exit(EXIT_FAILURE);
     }
+    freeaddrinfo(ai);
 
     if(listen(sockfd, LISTEN_BACKLOG) < 0) {
         ERRPRINTF("listen failed: %s\n", strerror(errno));
@@ -141,6 +252,7 @@ static void open_socket(char *port) {
 }
 
 static void run_server(void) {
+    FILE *conn;
     int connfd;
     while(!quit) {
         connfd = accept(sockfd, NULL, NULL);
@@ -262,11 +374,13 @@ static void handle_request(FILE *conn) {
     char timestr[100];
     if(tm == NULL) {
         ERRPUTS("gmtime failed");
+        free(file_path);
         fclose(conn);
         cleanup_exit(EXIT_FAILURE);
     }
     if(strftime(timestr, sizeof(timestr), "%a, %d %b %Y %T %Z", tm) == 0) {
-        ERRPUTS("gmtime failed");
+        ERRPUTS("strftime failed");
+        free(file_path);
         fclose(conn);
         cleanup_exit(EXIT_FAILURE);
     }
@@ -277,7 +391,7 @@ static void handle_request(FILE *conn) {
     res.header_first = &date_header;
     res.body = body;
     res.body_len = -1;
-    send_res(&res);
+    send_res(&res, conn);
     if(fclose(body) != 0) {
         ERRPRINTF("fclose on %s failed: %s\n", file_path, strerror(errno));
     }
@@ -285,7 +399,7 @@ static void handle_request(FILE *conn) {
     free(file_path);
 }
 
-static void send_res(http_frame_t *res) {
+static void send_res(http_frame_t *res, FILE *conn) {
     printf("< %lu %s\n", res->status, res->status_text);
     int ret = http_send_res(conn, res);
     if(ret != HTTP_SUCCESS) {
@@ -295,6 +409,7 @@ static void send_res(http_frame_t *res) {
             break;
         default:
             ERRPRINTF("error while sending response: unknown error: %u\n", ret);
+            fclose(conn);
             cleanup_exit(EXIT_FAILURE);
         }
     }
@@ -331,16 +446,8 @@ static char *get_file_path(char *req_path) {
 }
 
 static void cleanup_exit(int status) {
-    if(ai != NULL) {
-        freeaddrinfo(ai);
-    }
-
     if(sockfd >= 0 ) {
         close(sockfd);
-    }
-
-    if(conn != NULL) {
-        fclose(conn);
     }
     exit(status);
 }
