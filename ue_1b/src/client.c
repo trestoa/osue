@@ -289,7 +289,7 @@ static void perform_request(void) {
     
     // TODO: only open outfile when request successful
     // Open output file
-    FILE *out = stdout;
+    out = stdout;
     if(outfile_path != NULL) {
         if((out = fopen(outfile_path, "w")) == NULL) {
             ERRPRINTF("fopen on %s failed: %s\n", outfile_path, strerror(errno));
