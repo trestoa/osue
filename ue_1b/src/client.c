@@ -298,13 +298,15 @@ static void open_out_file(void) {
         if(outfile != NULL) {
             path = outfile;
         } else {
-            char *filename = basename(file_path);
-            if(strcmp(filename, "/")) {
+            char *filename;
+            if(file_path[strlen(file_path)-1] == '/') {
                 filename = "index.html";
+            } else {
+                filename = basename(file_path);
             }
 
             int trailing_slash = outdir[strlen(outdir)-1] == '/';
-            // Add 1 additional character
+            // Add 1 additional character for null byte
             int path_len = strlen(outdir) + strlen(filename) + (trailing_slash == 1 ? 0 : 1) + 1;
 
             outfile_alloc = 1;

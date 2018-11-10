@@ -1,3 +1,13 @@
+/**
+ * @file server.c
+ * @author Markus Klein (e11707252@student.tuwien.ac.at)
+ * @brief 
+ * @version 1.0
+ * @date 2018-11-07
+ * @details 
+ * 
+ */
+
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -13,6 +23,12 @@
 #include "utils.h"
 
 #define LISTEN_BACKLOG 50
+
+#define SEND_ERR_RES(s, st) \
+    res.status = s; \
+    res.status_text = st; \
+    send_res(&res); \
+    http_free_frame(req);
 
 static char *progname;
 
@@ -38,7 +54,7 @@ static char *get_file_path(char *req_path);
 
 static void handle_request(FILE *conn);
 
-static void send_res(http_frame_t *res, FILE *body);
+static void send_res(http_frame_t *res);
 
 int main(int argc, char **argv) {
     char *port = "8080";
@@ -158,25 +174,7 @@ static void handle_request(FILE *conn) {
     memset(&res, 0, sizeof(res));
 
     http_header_t conn_header = {"Connection", "close", NULL};
-    
-    time_t t = time(NULL);
-    struct tm *tm = gmtime(&t);
-    // We assume that 100 characters will be sufficient for the date
-    char timestr[100];
-    if(tm == NULL) {
-        ERRPUTS("gmtime failed");
-        fclose(conn);
-        cleanup_exit(EXIT_FAILURE);
-    }
-    // TODO: set locale?
-    if(strftime(timestr, sizeof(timestr), "%a, %d %b %Y %T %Z", tm) == 0) {
-        ERRPUTS("gmtime failed");
-        fclose(conn);
-        cleanup_exit(EXIT_FAILURE);
-    }
-    http_header_t date_header = {"Date", timestr, &conn_header};
-
-    res.header_first = &date_header;
+    res.header_first = &conn_header;
 
     int ret = http_recv_req(conn, &req);
     if(ret != HTTP_SUCCESS) {
@@ -192,10 +190,7 @@ static void handle_request(FILE *conn) {
             return;
         case HTTP_ERR_PROTOCOL:
             ERRPUTS("malformed request received");
-            res.status = 400;
-            res.status_text = "Bad Request";
-            http_send_res(conn, &res, NULL);
-            http_free_frame(req);
+            SEND_ERR_RES(400, "Bad Request");
             return;
         default:
             ERRPRINTF("error while receiving request: unknown error: %u\n", ret);
@@ -208,10 +203,7 @@ static void handle_request(FILE *conn) {
     printf("> %s %s\n", req->method, req->file_path);
 
     if(strcasecmp(req->method, "GET") != 0) {
-        res.status = 501;
-        res.status_text = "Not Implemented";
-        send_res(&res, NULL);
-        http_free_frame(req);
+        SEND_ERR_RES(501, "Not Implemented");
         return;
     }
 
@@ -222,20 +214,13 @@ static void handle_request(FILE *conn) {
         if(errno == ENOENT) {
             free(file_path);
 
-            res.status = 404;
-            res.status_text = "Not Found";
-            send_res(&res, NULL);
-            http_free_frame(req);
+            SEND_ERR_RES(404, "Not Found");
             return;
         }
 
         ERRPRINTF("fopen on %s failed: %s\n", file_path, strerror(errno));
         free(file_path);
-        
-        res.status = 500;
-        res.status_text = "Internal Server Error";
-        send_res(&res, NULL);
-        http_free_frame(req);
+        SEND_ERR_RES(500, "Internal Server Error");
         return;
     } 
 
@@ -245,11 +230,7 @@ static void handle_request(FILE *conn) {
             ERRPRINTF("fclose on %s failed: %s\n", file_path, strerror(errno));
         }
         free(file_path);
-        
-        res.status = 500;
-        res.status_text = "Internal Server Error";
-        send_res(&res, NULL);
-        http_free_frame(req);
+        SEND_ERR_RES(500, "Internal Server Error");
         return;
     }
     int file_len = ftell(body);
@@ -262,11 +243,7 @@ static void handle_request(FILE *conn) {
             ERRPRINTF("fclose on %s failed: %s\n", file_path, strerror(errno));
         }
         free(file_path);
-        
-        res.status = 500;
-        res.status_text = "Internal Server Error";
-        send_res(&res, NULL);
-        http_free_frame(req);
+        SEND_ERR_RES(500, "Internal Server Error");
         return;
     }
     if(fseek(body, 0, SEEK_SET) != 0) {
@@ -275,19 +252,32 @@ static void handle_request(FILE *conn) {
             ERRPRINTF("fclose on %s failed: %s\n", file_path, strerror(errno));
         }
         free(file_path);
-        
-        res.status = 500;
-        res.status_text = "Internal Server Error";
-        send_res(&res, NULL);
-        http_free_frame(req);
+        SEND_ERR_RES(500, "Internal Server Error");
         return;
     }
 
-    http_header_t c_length_header = {"Content-Length", file_len_str, &date_header};
+    time_t t = time(NULL);
+    struct tm *tm = gmtime(&t);
+    // We assume that 100 characters will be sufficient for the date
+    char timestr[100];
+    if(tm == NULL) {
+        ERRPUTS("gmtime failed");
+        fclose(conn);
+        cleanup_exit(EXIT_FAILURE);
+    }
+    if(strftime(timestr, sizeof(timestr), "%a, %d %b %Y %T %Z", tm) == 0) {
+        ERRPUTS("gmtime failed");
+        fclose(conn);
+        cleanup_exit(EXIT_FAILURE);
+    }
+    http_header_t c_len_header = {"Content-Length", file_len_str, &conn_header};
+    http_header_t date_header = {"Date", timestr, &c_len_header};
     res.status = 200;
     res.status_text = "OK";
-    res.header_first = &c_length_header;
-    send_res(&res, body);
+    res.header_first = &date_header;
+    res.body = body;
+    res.body_len = -1;
+    send_res(&res);
     if(fclose(body) != 0) {
         ERRPRINTF("fclose on %s failed: %s\n", file_path, strerror(errno));
     }
@@ -295,9 +285,9 @@ static void handle_request(FILE *conn) {
     free(file_path);
 }
 
-static void send_res(http_frame_t *res, FILE *body) {
+static void send_res(http_frame_t *res) {
     printf("< %lu %s\n", res->status, res->status_text);
-    int ret = http_send_res(conn, res, body);
+    int ret = http_send_res(conn, res);
     if(ret != HTTP_SUCCESS) {
         switch(ret) {
         case HTTP_ERR_STREAM:
