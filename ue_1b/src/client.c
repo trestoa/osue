@@ -137,6 +137,14 @@ static void connect_to_server(void);
 static void handle_http_err(int err, char *cause);
 
 /**
+ * @brief Removes the located at outfile_path.
+ * @details Removes the located at outfile_path if != NULL, ignoring a possible ENOENT
+ * error (other errors are handled by printing an error message).
+ * Global variables: outfile_path.
+ */
+static void clear_outfile(void);
+
+/**
  * Cleanup and terminate.
  * @brief Free allocated memory, close open streams and terminate program with the
  * given status code.
@@ -306,6 +314,7 @@ static void perform_request(void) {
 
     if(res->status != 200) {
         ERRPRINTF("server returned with status: %lu %s\n", res->status, res->status_text);
+        clear_outfile();
         http_free_frame(res);
         cleanup_exit(EXIT_STATUS_ERR);
     }
@@ -369,6 +378,11 @@ static void handle_http_err(int err, char *cause) {
     default:
         ERRPRINTF("%s: unknown error", cause);
     }
+    clear_outfile();
+    cleanup_exit(status);
+}
+
+static void clear_outfile(void) {
     if(outfile_path != NULL) {
         if(remove(outfile_path) != 0) {
             if(errno != ENOENT) {
@@ -376,7 +390,6 @@ static void handle_http_err(int err, char *cause) {
             }
         }
     }
-    cleanup_exit(status);
 }
 
 static void cleanup_exit(int status) {
