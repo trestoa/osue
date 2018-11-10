@@ -94,9 +94,9 @@ static FILE *out = NULL;
 
 /**
  * Print usage. 
- * @brief Prints synopsis of the mydiff program.
+ * @brief Prints synopsis of the http client program.
  * 
- * @details Prints the usage message of the programm mydiff on sterr and 
+ * @details Prints the usage message of the client on sterr and 
  * terminates the program with EXIT_FAILURE.
  * Global variables: progname.
  */
@@ -125,7 +125,7 @@ static void handle_http_err(int err, char *cause);
 
 /**
  * Cleanup and terminate.
- * @brief Free allocated memory, clode open streams and terminate program with the
+ * @brief Free allocated memory, close open streams and terminate program with the
  * given status code.
  * 
  * @param status Returns status of the program.
@@ -157,9 +157,8 @@ static void perform_request(void);
 static void open_out_file(void);
 
 /**
- * Main method for the http client.
- * @brief Program entry point. Parses the command line arguments and calls the 
- * functions which perform the actual http request.
+ * @brief Main method for the http server. Parses the command line arguments and
+ * calls the functions which perform the actual http request.
  * 
  * @param argc Argument counter.
  * @param argv Argument vector.

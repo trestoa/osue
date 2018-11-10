@@ -1,11 +1,13 @@
 /**
  * @file server.c
  * @author Markus Klein (e11707252@student.tuwien.ac.at)
- * @brief 
+ * @brief Implementation of the http server for exercise 1b.
  * @version 1.0
  * @date 2018-11-07
- * @details 
- * 
+ * @details This module contains the implementation of a simple http that is able to
+ * server static file from a directory using http GET requests. The code in this module 
+ * consists mostly of setup code resource management while the specifics on the http
+ * protocol are provided by the http module. 
  */
 
 #include <stdio.h>
@@ -22,8 +24,19 @@
 #include "http.h"
 #include "utils.h"
 
+/**
+ * @brief Client backlog.
+ * @details Client backlog paramter passed to listen indicating the number of 
+ * clients that will be keept in the queue for being accepted.
+ */
 #define LISTEN_BACKLOG 50
 
+/**
+ * @brief Macro for replying an error message.
+ * @details Replies an http response with the given status number and status text.
+ * Assumes that the http frame called "res", the client connection stream "conn" and the 
+ * and the request frame "req" exists in the context where this macro is used. 
+ */
 #define SEND_ERR_RES(s, st) \
     res.status = s; \
     res.status_text = st; \
