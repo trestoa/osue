@@ -314,7 +314,7 @@ static void handle_request(FILE *conn) {
             http_free_frame(req);
             return;
         case HTTP_ERR_PROTOCOL:
-            ERRPUTS("malformed request received");
+            ERRPUTS("malformed request received\n");
             SEND_ERR_RES(400, "Bad Request");
             return;
         default:
@@ -386,13 +386,13 @@ static void handle_request(FILE *conn) {
     // We assume that 100 characters will be sufficient for the date
     char timestr[100];
     if(tm == NULL) {
-        ERRPUTS("gmtime failed");
+        ERRPUTS("gmtime failed\n");
         free(file_path);
         fclose(conn);
         cleanup_exit(EXIT_FAILURE);
     }
     if(strftime(timestr, sizeof(timestr), "%a, %d %b %Y %T %Z", tm) == 0) {
-        ERRPUTS("strftime failed");
+        ERRPUTS("strftime failed\n");
         free(file_path);
         fclose(conn);
         cleanup_exit(EXIT_FAILURE);

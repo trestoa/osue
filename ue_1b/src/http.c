@@ -271,6 +271,12 @@ http_err_t http_recv_req(FILE* sock, http_frame_t **req) {
     ret = read_first_line(sock, &first_line, &method, &file_path, &http_version);
     if(ret != HTTP_SUCCESS) {
         free(first_line);
+        if(ret == HTTP_ERR_PROTOCOL) {
+            int skip_ret;
+            if((skip_ret = skip_msg(sock)) != HTTP_SUCCESS) {
+                return skip_ret;
+            }
+        }
         return ret;
     }
     // Check http version
@@ -466,7 +472,7 @@ static http_err_t skip_msg(FILE *sock) {
     size_t linecap = 0;
     ssize_t linelen;
 
-    while(strcmp(line, "\r\n") != 0) {
+    while(line == NULL || strcmp(line, "\r\n") != 0) {
         if((linelen = getline(&line, &linecap, sock)) <= 0) {
             free(line);
             http_errvar = sock;

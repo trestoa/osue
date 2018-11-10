@@ -198,7 +198,7 @@ int main(int argc, char **argv) {
     }
 
     if(outdir != NULL && outfile != NULL) {
-        ERRPUTS("Either the -d or -o argument may be present, but not both them.");
+        ERRPUTS("Either the -d or -o argument may be present, but not both them.\n");
         usage();
     }
 
@@ -351,7 +351,7 @@ static void handle_http_err(int err, char *cause) {
         ERRPRINTF("%s: %s\n", cause, strerror(ferror(sock)));
         break;
     case HTTP_ERR_PROTOCOL:
-        ERRPUTS("Protocol error!");
+        ERRPUTS("Protocol error!\n");
         cleanup_exit(EXIT_PROTOCOL_ERR);
     default:
         ERRPRINTF("%s: unknown error", cause);
