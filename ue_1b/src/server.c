@@ -306,7 +306,9 @@ static void handle_request(FILE *conn) {
         switch(ret) {
         case HTTP_ERR_INTERNAL:
             ERRPRINTF("error while receiving request: %s\n", strerror(errno));
-            fclose(conn);
+            if(fclose(conn) != 0) {
+                ERRPRINTF("fclose conn failed: %s\n", strerror(errno));
+            }
             http_free_frame(req);
             cleanup_exit(EXIT_FAILURE);
         case HTTP_ERR_STREAM:
@@ -319,7 +321,9 @@ static void handle_request(FILE *conn) {
             return;
         default:
             ERRPRINTF("error while receiving request: unknown error: %u\n", ret);
-            fclose(conn);
+            if(fclose(conn) != 0) {
+                ERRPRINTF("fclose conn failed: %s\n", strerror(errno));
+            }
             http_free_frame(req);
             cleanup_exit(EXIT_FAILURE);
         }
@@ -388,13 +392,17 @@ static void handle_request(FILE *conn) {
     if(tm == NULL) {
         ERRPUTS("gmtime failed\n");
         free(file_path);
-        fclose(conn);
+        if(fclose(conn) != 0) {
+            ERRPRINTF("fclose conn failed: %s\n", strerror(errno));
+        }
         cleanup_exit(EXIT_FAILURE);
     }
     if(strftime(timestr, sizeof(timestr), "%a, %d %b %Y %T %Z", tm) == 0) {
         ERRPUTS("strftime failed\n");
         free(file_path);
-        fclose(conn);
+        if(fclose(conn) != 0) {
+            ERRPRINTF("fclose conn failed: %s\n", strerror(errno));
+        }
         cleanup_exit(EXIT_FAILURE);
     }
     http_header_t c_len_header = {"Content-Length", file_len_str, &conn_header};
@@ -422,7 +430,9 @@ static void send_res(http_frame_t *res, FILE *conn) {
             break;
         default:
             ERRPRINTF("error while sending response: unknown error: %u\n", ret);
-            fclose(conn);
+            if(fclose(conn) != 0) {
+                ERRPRINTF("fclose conn failed: %s\n", strerror(errno));
+            }
             cleanup_exit(EXIT_FAILURE);
         }
     }

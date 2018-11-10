@@ -50,21 +50,20 @@ static char *progname;
 static char *port = "http";
 
 /**
- * @brief Output directory path.
+ * @brief Output directory path option argument.
  * Output directory to which the response body should be written to.
  * (the -d cli argument)
  */
-static char *outdir = NULL;
+static char *outdir_opt = NULL;
 
 /**
- * @brief Output file path.
+ * @brief Output file path option argument.
  * Output file where the the response body should be written to.
  * (the -o cli argument)
  */
-static char *outfile = NULL;
+static char *outfile_opt = NULL;
 
 // These are all pointers to allocated memory space -> free needed.
-
 /**
  * @brief Hostname part of the URL
  * @details Hostname part of the request URL (e.g. "localhost" in 
@@ -82,12 +81,26 @@ static char *hostname = NULL;
 static char *file_path = NULL;
 
 /**
- * @brief Server connection
+ * @brief Server connection.
+ * @details Server connection stram.
  */
 static FILE *sock = NULL;
 
 /**
- * @brief Output stream
+ * @brief Indicates whether outfile_path needs to be freed.
+ * @details if == 1 outfile_path points to dynamically memory which needs to be cleared
+ * on program termination.
+ */
+static int outfile_path_alloc = 0;
+
+/**
+ * @brief Path to outfile.
+ * @details Path where the reponse body should be written to.
+ */
+static char *outfile_path = NULL;
+
+/**
+ * @brief Output stream.
  * Stream for the output file.
  */
 static FILE *out = NULL;
@@ -132,7 +145,7 @@ static void handle_http_err(int err, char *cause);
  * 
  * @details Closes open file streams (pointers != NULL) and exits the program using 
  * exit(), returning the given status.
- * Global variables: hostname, file_path, sock, out.
+ * Global variables: hostname, file_path, outfile_path, outfile_path_alloc, sock, out.
  */
 static void cleanup_exit(int status);
 
@@ -144,17 +157,19 @@ static void cleanup_exit(int status);
  * body is written either to a file or to stdout. If the server responds with an 
  * malformed response, the programs exists with EXIT_PROTOCOL_ERR. If a reponse
  * status code != 200 is encountered, the exit code will be EXIT_STATUS_ERR.
- * Global variables: hostname, file_path, sock, out.
+ * Global variables: hostname, file_path, sock, outfile_path, out.
  */
 static void perform_request(void);
 
 /**
- * @brief Opens the stdio stream where the response body should be written to.
+ * @brief Computes the output file where the request body should be stored.
  * @details Depending on the argument passed to the program, this function either
- * sets out to stdout (if neither the -o nor the -d option were present) or opens
- * a stream to the output file.
+ * sets outfile_path to NULL (if neither the -o nor the -d option were present) or 
+ * to the output file path. outfile_path_alloc is set to 1 if outfile_path points to
+ * dynamically allocated memory.
+ * Global variables: hostname, file_path, outfile_path, outfile_path_alloc.
  */
-static void open_out_file(void);
+static void extract_out_file(void);
 
 /**
  * @brief Main method for the http server. Parses the command line arguments and
@@ -168,6 +183,7 @@ static void open_out_file(void);
  * number of arguments. If the argument count and provided options are correct, the 
  * subroutines for connecting to the server, performing the request, handling the
  * response and shutting down the program are called. 
+ * Global variables: progname, outfile_opt, outdir_opt.
  */
 int main(int argc, char **argv) {
     progname = argv[0];
@@ -180,10 +196,10 @@ int main(int argc, char **argv) {
             port = optarg;
             break;
         case 'o':
-            outfile = optarg;
+            outfile_opt = optarg;
             break;
         case 'd':
-            outdir = optarg;
+            outdir_opt = optarg;
             break;
         case '?':
         default:
@@ -197,7 +213,7 @@ int main(int argc, char **argv) {
         usage();
     }
 
-    if(outdir != NULL && outfile != NULL) {
+    if(outdir_opt != NULL && outfile_opt != NULL) {
         ERRPUTS("Either the -d or -o argument may be present, but not both them.\n");
         usage();
     }
@@ -208,6 +224,8 @@ int main(int argc, char **argv) {
         handle_http_err(ret, url);
         exit(EXIT_FAILURE);
     }
+
+    extract_out_file();
     
     connect_to_server();
     perform_request();
@@ -271,7 +289,13 @@ static void perform_request(void) {
     
     // TODO: only open outfile when request successful
     // Open output file
-    open_out_file();
+    FILE *out = stdout;
+    if(outfile_path != NULL) {
+        if((out = fopen(outfile_path, "w")) == NULL) {
+            ERRPRINTF("fopen on %s failed: %s\n", outfile_path, strerror(errno));
+            cleanup_exit(EXIT_FAILURE);
+        }
+    }
 
     // Receive response
     ret = http_recv_res(sock, &res, out);
@@ -288,15 +312,14 @@ static void perform_request(void) {
     http_free_frame(res);
 }
 
-static void open_out_file(void) {
-    if(outfile == NULL && outdir == NULL) {
-        out = stdout;
+static void extract_out_file(void) {
+    if(outfile_opt == NULL && outdir_opt == NULL) {
+        outfile_path = NULL;
     } else {
-        char *path;
-        int outfile_alloc = 0;
-        if(outfile != NULL) {
-            path = outfile;
+        if(outfile_opt != NULL) {
+            outfile_path = outfile_opt;
         } else {
+            outfile_path_alloc = 1;
             char *filename;
             if(file_path[strlen(file_path)-1] == '/') {
                 filename = "index.html";
@@ -304,38 +327,27 @@ static void open_out_file(void) {
                 filename = basename(file_path);
             }
 
-            int trailing_slash = outdir[strlen(outdir)-1] == '/';
+            int trailing_slash = outdir_opt[strlen(outdir_opt)-1] == '/';
             // Add 1 additional character for null byte
-            int path_len = strlen(outdir) + strlen(filename) + (trailing_slash == 1 ? 0 : 1) + 1;
+            int path_len = strlen(outdir_opt) + strlen(filename) + (trailing_slash == 1 ? 0 : 1) + 1;
 
-            outfile_alloc = 1;
-            path = malloc(path_len * sizeof(*path));
-            if(path == NULL) {
+            outfile_path = malloc(path_len * sizeof(*outfile_path));
+            if(outfile_path == NULL) {
                 ERRPRINTF("malloc failed: %s\n", strerror(errno));
                 cleanup_exit(EXIT_FAILURE);
             }
             
             if(trailing_slash == 0) {
-                snprintf(path, path_len, "%s/%s", outdir, filename);
+                snprintf(outfile_path, path_len, "%s/%s", outdir_opt, filename);
             } else {
-                snprintf(path, path_len, "%s%s", outdir, filename);
+                snprintf(outfile_path, path_len, "%s%s", outdir_opt, filename);
             }
-        }
-
-        if((out = fopen(path, "w")) == NULL) {
-            ERRPRINTF("fopen on %s failed: %s\n", path, strerror(errno));
-            if(outfile_alloc == 1) {
-                free(path);
-            }
-            cleanup_exit(EXIT_FAILURE);
-        }
-        if(outfile_alloc == 1) {
-            free(path);
         }
     }
 }
 
 static void handle_http_err(int err, char *cause) {
+    int status = EXIT_FAILURE;
     switch(err) {
     case HTTP_ERR_URL_FORMAT:
         ERRPRINTF("'%s' is not a valid url\n", cause);
@@ -352,16 +364,27 @@ static void handle_http_err(int err, char *cause) {
         break;
     case HTTP_ERR_PROTOCOL:
         ERRPUTS("Protocol error!\n");
-        cleanup_exit(EXIT_PROTOCOL_ERR);
+        status = EXIT_PROTOCOL_ERR;
+        break;
     default:
         ERRPRINTF("%s: unknown error", cause);
     }
-    cleanup_exit(EXIT_FAILURE);
+    if(outfile_path != NULL) {
+        if(remove(outfile_path) != 0) {
+            if(errno != ENOENT) {
+                ERRPRINTF("remove %s failed: %s\n", outfile_path, strerror(errno));
+            }
+        }
+    }
+    cleanup_exit(status);
 }
 
 static void cleanup_exit(int status) {
     free(hostname);
     free(file_path);
+    if(outfile_path_alloc == 1) {
+        free(outfile_path);
+    }
 
     if(sock != NULL) {
         fclose(sock);
