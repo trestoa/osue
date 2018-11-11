@@ -94,6 +94,7 @@ static void usage(void);
  * 
  * @details Opens a passive socket, binds it to the given port and start listening
  * on the socket. The file descriptor of the socket is stored to sockfd. 
+ * Global variables: sockfd.
  */
 static void open_socket(char *port);
 
@@ -106,6 +107,7 @@ static void open_socket(char *port);
  * 
  * @details Closes open file streams (pointers != NULL) and exits the program using 
  * exit(), returning the given status.
+ * Global variables: sockfd.
  */
 static void cleanup_exit(int status);
 
@@ -117,6 +119,7 @@ static void cleanup_exit(int status);
  * @details Signal handler. Initiates the termination of the program by setting
  * the quit flag. The server will finish handling the current request (if there is any)
  * and terminate afterwards.
+ * Global variables: quit.
  */
 static void handle_signal(int signal);
 
@@ -124,6 +127,7 @@ static void handle_signal(int signal);
  * @brief Contains the main loop for the server.
  * @details Continuously accept client and handle their requests (via the 
  * handle_request function). 
+ * Global variables: sockfd, quit.
  */
 static void run_server(void);
 
@@ -139,6 +143,7 @@ static void run_server(void);
  * - Close the socket without sending a reply if a stream error on the client connection occurs.
  * - Terminate the server if a memory allocation error (or a different unexpected error) occurs.
  * - Reply with an 500 internal server error otherwise (e.g. request file failed to open).
+ * Global variables: docroot, index_file.
  */
 static void handle_request(FILE *conn);
 
@@ -176,6 +181,7 @@ static void send_res(http_frame_t *res, FILE *conn);
  * number of arguments. If the argument count and provided options are correct, signal
  * for SIGINT and SIGTERM are set up and the run_server function with the main loop 
  * is called.
+ * Global variables: progname.
  */
 int main(int argc, char **argv) {
     char *port = "8080";
@@ -397,7 +403,7 @@ static void handle_request(FILE *conn) {
         }
         cleanup_exit(EXIT_FAILURE);
     }
-    if(strftime(timestr, sizeof(timestr), "%a, %d %b %Y %T %Z", tm) == 0) {
+    if(strftime(timestr, sizeof(timestr), "%a, %d %b %y %T %Z", tm) == 0) {
         ERRPUTS("strftime failed\n");
         free(file_path);
         if(fclose(conn) != 0) {
