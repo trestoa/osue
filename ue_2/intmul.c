@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <sys/errno.h>
 #include <string.h>
 #include <unistd.h>
@@ -21,7 +22,7 @@ static void read_nums(void);
 
 static void multiply(void);
 
-static inline int extract_digit(char* num, int idx);
+static inline int extract_digit(uint8_t* num, int idx);
 
 static void cleanup_exit(int status);
 
@@ -70,7 +71,7 @@ static void multiply(void) {
     }
 
     if(alen == 1) {
-        int res = extract_digit(a, 0) * extract_digit(b, 0);
+        int res = extract_digit((uint8_t*) a, 0) * extract_digit((uint8_t*) b, 0);
         fprintf(stdout, "%x", res);
     } else if(alen > 1) {
         if(alen % 2 != 0) {
@@ -102,8 +103,6 @@ static void multiply(void) {
         write_pipe(pipe_d_fd_in[1], a + alen/2, alen/2, 0, &f);
         write_pipe(0, b + alen/2, alen/2, 1, &f);
 
-        fprintf(stderr, "a:%u, b:%u, c:%u, d:%u\n", pid_a, pid_b, pid_c, pid_d);
-
         // Read and combine results
         FILE *child_out_a = fdopen(pipe_a_fd_out[0], "r");
         if(child_out_a == NULL) {
@@ -127,7 +126,7 @@ static void multiply(void) {
         }
 
         // Allocate result buffers
-        char *res_a, *res_b, *res_c, *res_d, *res;
+        unsigned char *res_a, *res_b, *res_c, *res_d, *res;
         int res_a_len, res_b_len, res_c_len, res_d_len;
         
         if((res_a = malloc(alen)) == NULL) {
@@ -178,13 +177,14 @@ static void multiply(void) {
                 sum += extract_digit(res_a, res_a_len - i + alen - 1);
             }
 
-            res[alen - i/2 - 1] |= sum % 16 << 4*(i%2);
+            res[alen - i/2 - 1] |= (sum % 16) << 4*(i%2);
             sum /= 16;
         }
 
         for(int j = alen - (i - 1)/2 - 1; j < alen; j++) {
             fprintf(stdout, "%02x", res[j]);
         }
+        fprintf(stdout, "\n");
         fflush(stdout);
         
         if(fclose(child_out_a) != 0) {
@@ -203,7 +203,6 @@ static void multiply(void) {
             fprintf(stderr, "[%s] fclose failed: %s\n", progname, strerror(errno));
             cleanup_exit(EXIT_FAILURE);
         }
-
 
         int status, child_err = 0;
         waitpid(pid_a, &status, 0);
@@ -301,7 +300,7 @@ static pid_t fork_setup_pipes(int in_fd[2], int out_fd[2]) {
             cleanup_exit(EXIT_FAILURE);
         }
 
-        execlp(progname, NULL);
+        execlp(progname, progname, NULL);
         fprintf(stderr, "[%s] execlp failed\n", progname);
         cleanup_exit(EXIT_FAILURE);
     default:
@@ -314,7 +313,7 @@ static pid_t fork_setup_pipes(int in_fd[2], int out_fd[2]) {
     return pid;
 }
 
-static inline int extract_digit(char* num, int idx) {
+static inline int extract_digit(unsigned char* num, int idx) {
     char buf[2];
     buf[1] = '\0';
     buf[0] = num[idx];
