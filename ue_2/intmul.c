@@ -5,6 +5,9 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
+ #define MAX(a,b) \
+     (a > b ? a : b)
+
 static char *progname;
 
 static char *a = NULL, *b = NULL;
@@ -25,8 +28,6 @@ static void cleanup_exit(int status);
 static pid_t fork_setup_pipes(int in_fd[2], int out_fd[2]);
 
 static void write_pipe(int fd, char *data, int len, int do_close, FILE **f);
-
-static void output_from_child(int fd);
 
 int main(int argc, char **argv) {
     progname = argv[0];
@@ -62,6 +63,7 @@ static void read_nums(void) {
 static void multiply(void) {
     int alen = strlen(a) - 1;
     int blen = strlen(b) - 1;
+
     if(alen != blen) {
         fprintf(stderr, "[%s] the two integers do not have equal length\n", progname);
         cleanup_exit(EXIT_FAILURE);
@@ -69,9 +71,7 @@ static void multiply(void) {
 
     if(alen == 1) {
         int res = extract_digit(a, 0) * extract_digit(b, 0);
-        fprintf(stderr, "res: %u\n", res);
-        fputc(res, stdout);
-        fflush(stdout);
+        fprintf(stdout, "%x", res);
     } else if(alen > 1) {
         if(alen % 2 != 0) {
             fprintf(stderr, "[%s] the number of digits is not even\n", progname);
@@ -102,11 +102,14 @@ static void multiply(void) {
         write_pipe(pipe_d_fd_in[1], a + alen/2, alen/2, 0, &f);
         write_pipe(0, b + alen/2, alen/2, 1, &f);
 
-        // Read and combine results
-        // For process d
-        output_from_child(pipe_d_fd_out[0]);
+        fprintf(stderr, "a:%u, b:%u, c:%u, d:%u\n", pid_a, pid_b, pid_c, pid_d);
 
-        // For process b and c
+        // Read and combine results
+        FILE *child_out_a = fdopen(pipe_a_fd_out[0], "r");
+        if(child_out_a == NULL) {
+            fprintf(stderr, "[%s] fdopen failed: %s\n", progname, strerror(errno));
+            cleanup_exit(EXIT_FAILURE);
+        }
         FILE *child_out_b = fdopen(pipe_b_fd_out[0], "r");
         if(child_out_b == NULL) {
             fprintf(stderr, "[%s] fdopen failed: %s\n", progname, strerror(errno));
@@ -117,63 +120,76 @@ static void multiply(void) {
             fprintf(stderr, "[%s] fdopen failed: %s\n", progname, strerror(errno));
             cleanup_exit(EXIT_FAILURE);
         }
+        FILE *child_out_d = fdopen(pipe_d_fd_out[0], "r");
+        if(child_out_d == NULL) {
+            fprintf(stderr, "[%s] fdopen failed: %s\n", progname, strerror(errno));
+            cleanup_exit(EXIT_FAILURE);
+        }
+
+        // Allocate result buffers
+        char *res_a, *res_b, *res_c, *res_d, *res;
+        int res_a_len, res_b_len, res_c_len, res_d_len;
         
-        fprintf(stderr, "d done");
+        if((res_a = malloc(alen)) == NULL) {
+            fprintf(stderr, "[%s] malloc: %s\n", progname, strerror(errno));
+            cleanup_exit(EXIT_FAILURE);
+        }
 
-        int carry = 0;
-        char buf_b[16], buf_c[16];
-        int act_read_b, act_read_c;
-        while(feof(child_out_b) == 0 || feof(child_out_b) == 0) {
-            if((act_read_b = fread(buf_b, 1, sizeof(buf_b), child_out_b)) != sizeof(buf_b)) {
-                if(act_read_b == -1 && feof(child_out_b) == 0) {
-                    fclose(child_out_b);
-                    fclose(child_out_c);
-                    fprintf(stderr, "[%s] fread failed: %s\n", progname, strerror(ferror(child_out_b)));
-                    cleanup_exit(EXIT_FAILURE);
-                }
+        if((res_b = malloc(alen)) == NULL) {
+            fprintf(stderr, "[%s] malloc: %s\n", progname, strerror(errno));
+            cleanup_exit(EXIT_FAILURE);
+        }
+
+        if((res_c = malloc(alen)) == NULL) {
+            fprintf(stderr, "[%s] malloc: %s\n", progname, strerror(errno));
+            cleanup_exit(EXIT_FAILURE);
+        }
+
+        if((res_d = malloc(alen)) == NULL) {
+            fprintf(stderr, "[%s] malloc: %s\n", progname, strerror(errno));
+            cleanup_exit(EXIT_FAILURE);
+        }
+
+        if((res = malloc(alen)) == NULL) {
+            fprintf(stderr, "[%s] malloc: %s\n", progname, strerror(errno));
+            cleanup_exit(EXIT_FAILURE);
+        }
+        memset(res, 0, alen);
+
+        // Read child results
+        res_a_len = fread(res_a, 1, alen, child_out_a);
+        res_b_len = fread(res_b, 1, alen, child_out_b);
+        res_c_len = fread(res_c, 1, alen, child_out_c);
+        res_d_len = fread(res_d, 1, alen, child_out_d);
+
+        int i;
+        int sum = 0;
+        for(i = 0; i < 2*alen; i++) {
+            if(i < res_d_len) {
+                sum += extract_digit(res_d, res_d_len - i - 1);
+            }
+            if(i < res_b_len + alen/2 && i >= alen/2) {
+                sum += extract_digit(res_b, res_b_len - i + alen/2 - 1);
+            }
+            if(i < res_c_len + alen/2 && i >= alen/2) {
+                sum += extract_digit(res_c, res_c_len - i + alen/2 - 1);
+            }
+            if(i < res_a_len + alen && i >= alen) {
+                sum += extract_digit(res_a, res_a_len - i + alen - 1);
             }
 
-            if((act_read_c = fread(buf_c, 1, sizeof(buf_c), child_out_c)) != sizeof(buf_c)) {
-                if(act_read_c == -1 && feof(child_out_c) == 0) {
-                    fclose(child_out_b);
-                    fclose(child_out_c);
-                    fprintf(stderr, "[%s] fread failed: %s\n", progname, strerror(ferror(child_out_c)));
-                    cleanup_exit(EXIT_FAILURE);
-                }
-            }
+            res[alen - i/2 - 1] |= sum % 16 << 4*(i%2);
+            sum /= 16;
+        }
 
-            int act_read_max = (act_read_c > act_read_b ? act_read_c : act_read_b);
-            for(int i = 0; i < act_read_max; i++) {
-                int b, c;
-                if(i < act_read_b) {
-                    b = buf_b[i];
-                } else {
-                    b = 0;
-                }
-
-                if(i < act_read_c) {
-                    c = buf_c[i];
-                } else {
-                    c = 0;
-                }
-
-                if(fputc((b + c + carry) % 0xFF, stdout) < 0) {
-                    fclose(child_out_b);
-                    fclose(child_out_c);
-                    fprintf(stderr, "[%s] fputc failed: %s\n", progname, strerror(ferror(stdout)));
-                    cleanup_exit(EXIT_FAILURE);
-                }
-                carry = (b + c + carry - 0xFF);
-                if(carry < 0) {
-                    carry = 0;
-                }
-            }
-
-            if(fflush(stdout) != 0) {
-                fprintf(stderr, "[%s] fflush failed: %s\n", progname, strerror(errno));
-                cleanup_exit(EXIT_FAILURE);
-            }
-            
+        for(int j = alen - (i - 1)/2 - 1; j < alen; j++) {
+            fprintf(stdout, "%02x", res[j]);
+        }
+        fflush(stdout);
+        
+        if(fclose(child_out_a) != 0) {
+            fprintf(stderr, "[%s] fclose failed: %s\n", progname, strerror(errno));
+            cleanup_exit(EXIT_FAILURE);
         }
         if(fclose(child_out_b) != 0) {
             fprintf(stderr, "[%s] fclose failed: %s\n", progname, strerror(errno));
@@ -183,39 +199,7 @@ static void multiply(void) {
             fprintf(stderr, "[%s] fclose failed: %s\n", progname, strerror(errno));
             cleanup_exit(EXIT_FAILURE);
         }
-
-        fprintf(stderr, "b c done");
-
-        // For process a
-        FILE *child_out = fdopen(pipe_a_fd_out[0], "r");
-        if(child_out == NULL) {
-            fprintf(stderr, "[%s] fdopen failed: %s\n", progname, strerror(errno));
-            cleanup_exit(EXIT_FAILURE);
-        }
-        char buf[16];
-        int act_read = sizeof(buf);
-        while(act_read == sizeof(buf)) {
-            if((act_read = fread(buf, 1, sizeof(buf), child_out)) != sizeof(buf)) {
-                if(act_read == -1 && feof(child_out) == 0) {
-                    fclose(child_out);
-                    fprintf(stderr, "[%s] fread failed: %s\n", progname, strerror(ferror(child_out)));
-                    cleanup_exit(EXIT_FAILURE);
-                }
-            }
-
-            for(int i = 0; i < act_read; i++) {
-                if(fputc((buf[i] + carry) % 0xFF, stdout) < 0) {
-                    fclose(child_out);
-                    fprintf(stderr, "[%s] fputc failed: %s\n", progname, strerror(ferror(stdout)));
-                    cleanup_exit(EXIT_FAILURE);
-                }
-                carry = (buf[i] + carry - 0xFF);
-                if(carry < 0) {
-                    carry = 0;
-                }
-            }
-        }
-        if(fclose(child_out) != 0) {
+        if(fclose(child_out_d) != 0) {
             fprintf(stderr, "[%s] fclose failed: %s\n", progname, strerror(errno));
             cleanup_exit(EXIT_FAILURE);
         }
@@ -249,40 +233,6 @@ static void multiply(void) {
         if(child_err != 0) {
             cleanup_exit(EXIT_FAILURE);
         }
-    }
-}
-
-static void output_from_child(int fd) {
-    FILE *child_out = fdopen(fd, "r");
-    if(child_out == NULL) {
-        fprintf(stderr, "[%s] fdopen failed: %s\n", progname, strerror(errno));
-        cleanup_exit(EXIT_FAILURE);
-    }
-
-    char buf[16];
-    int act_read = sizeof(buf);
-    while(act_read == sizeof(buf)) {
-        if((act_read = fread(buf, 1, sizeof(buf), child_out)) != sizeof(buf)) {
-            if(act_read == -1 && feof(child_out) == 0) {
-                fclose(child_out);
-                fprintf(stderr, "[%s] fread failed: %s\n", progname, strerror(ferror(child_out)));
-                cleanup_exit(EXIT_FAILURE);
-            }
-        }
-
-        if(fwrite(buf, 1, act_read, stdout) != act_read) {
-            fclose(child_out);
-            fprintf(stderr, "[%s] fwrite failed: %s\n", progname, strerror(ferror(child_out)));
-            cleanup_exit(EXIT_FAILURE);
-        }
-        if(fflush(stdout) != 0) {
-            fprintf(stderr, "[%s] fflush failed: %s\n", progname, strerror(errno));
-            cleanup_exit(EXIT_FAILURE);
-        }
-    }
-    if(fclose(child_out) != 0) {
-        fprintf(stderr, "[%s] fclose failed: %s\n", progname, strerror(errno));
-        cleanup_exit(EXIT_FAILURE);
     }
 }
 
