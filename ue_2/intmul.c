@@ -1,3 +1,17 @@
+/**
+ * @file intmul.c
+ * @author Markus Klein (e11707252@student.tuwien.ac.at)
+ * @brief Main module for exercise 2.
+ * @version 1.0
+ * @date 2018-12-14
+ * 
+ * @details This module contains the implementation of the program for 
+ * multiplying two large integers of equal length.  It uses an recursive 
+ * algorithm which splits the multiplication into four (smaller) subproducts 
+ * which are afterwards added together. More details on the algorithm can 
+ * be found in the exercise description. 
+ */
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -6,6 +20,12 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
+/**
+ * @brief Array of structs for storing data of a child process. 
+ * @details This array contains a struct object for each of the
+ * four child processes. The object stores information such as the 
+ * child's process id, the io pipes as well as its result. 
+ */
 static struct child_process {
     int pid;
     int pipe_in_fd[2];
@@ -14,28 +34,99 @@ static struct child_process {
     int res_len;
 } children[4];
 
+/**
+ * @brief Program name.
+ * @details Name of the executable used for usage and error messages.
+ */
 static char *progname;
 
-static char *a = NULL, *b = NULL;
+/**
+ * @brief First input number.
+ * Hex string representation of the first factor of the multiplication.
+ */
+static char *a = NULL;
 
+/**
+ * @brief Second input number.
+ * Hex string representation of the second factor of the multiplication.
+ */
+static char *b = NULL;
+
+/**
+ * Print usage. 
+ * @brief Prints synopsis of the intmul program.
+ * 
+ * @details Prints the usage message of the programm intmul on sterr and terminates 
+ * the program with EXIT_FAILURE.
+ * Global variables: progname.
+ */
 static void usage(void); 
 
+/**
+ * Cleanup and terminate.
+ * @brief Close open files and terminate program with the given status code.
+ * 
+ * @param status Returns status of the program.
+ * 
+ * @details Closes open files (file descriptor == -1)  and exits the program with 
+ * exit(), returning the given status.
+ * Global variables: a, b, children.
+ */
+static void cleanup_exit(int status);
+
+/**
+ * @brief Reads the multiplication factors from stdin.
+ * @details Reads two lines from stdin using getline and stores the resulting strings
+ * to the variable a (for the first line) and b (for the second line).
+ * Global variables: a, b.
+ */
 static void read_nums(void);
 
+/**
+ * @brief Contains the actual implementation of the multiplication algoritm.
+ * @details Multiplies the integers represented by the hex strings stored in a and b using
+ * the algorithm desribed in the exercise description. The numbers are recursively split into
+ * halfs with a new process being forked for each combination until both numbers consist of 
+ * only a single digit. In this case, the result is directly calculated and written to stdout. 
+ * Otherwise, the results of the sub-processes are join digit by digit and also written to stdout.
+ * Global variables: a, b, children.
+ */
 static void multiply(void);
 
+/**
+ * @brief Calculates the result of the multiplication from the four sub-results.
+ * @details This function calculates the sum of the results (which is equal to the 
+ * product of the input numbers) of the sub processes by stepping through the sub 
+ * results digit by digit. For a correct calculation, three of the sub results need 
+ * to left-shifted a few digits. In order to correctly approximate the result length,
+ * the fact that a product of two numbers of n digit can only have 2*n digits is used.
+ * 
+ * @param len Length of the input numbers.
+ */
 static void calculate_res(int len);
 
 static void read_child_res(struct child_process *child, int len);
 
 static inline int extract_digit(uint8_t* num, int idx);
 
-static void cleanup_exit(int status);
-
 static pid_t fork_setup_pipes(int in_fd[2], int out_fd[2]);
 
 static void write_pipe(int fd, char *data, int len, int do_close);
 
+/**
+ * Main method for the intmul program.
+ * @brief Program entry point. Checks the command line arguments and executes 
+ * the methods for reading the input numbers and performing the calculation.
+ * 
+ * @param argc Argument counter.
+ * @param argv Argument vector.
+ * @return int Program exit code (EXIT_SUCCESS)
+ * 
+ * @details Makes sure that no command line argument are given, initializes the
+ * child process array and subsequently performs the integer multication by calling
+ * the according functions.
+ * Global variables: progname, children.
+ */
 int main(int argc, char **argv) {
     progname = argv[0];
 
@@ -314,7 +405,13 @@ static inline int extract_digit(unsigned char* num, int idx) {
     char buf[2];
     buf[1] = '\0';
     buf[0] = num[idx];
-    return strtol(buf, NULL, 16);
+    errno = 0;
+    int res = strtol(buf, NULL, 16);
+    if (errno != 0 && res == 0) {
+        fprintf(stderr, "[%s] failed to convert to number: %s\n", progname, strerror(errno));
+        cleanup_exit(EXIT_FAILURE);
+    }
+    return res;
 }
 
 static void cleanup_exit(int status) {
