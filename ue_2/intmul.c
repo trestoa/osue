@@ -6,21 +6,27 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
- #define MAX(a,b) \
-     (a > b ? a : b)
+static struct child_process {
+    int pid;
+    int pipe_in_fd[2];
+    int pipe_out_fd[2];
+    unsigned char *res;
+    int res_len;
+} children[4];
 
 static char *progname;
 
 static char *a = NULL, *b = NULL;
 
-static int pipe_a_fd_in[2], pipe_a_fd_out[2];
-static int pipe_b_fd_in[2], pipe_b_fd_out[2];
-static int pipe_c_fd_in[2], pipe_c_fd_out[2];
-static int pipe_d_fd_in[2], pipe_d_fd_out[2];
+static void usage(void); 
 
 static void read_nums(void);
 
 static void multiply(void);
+
+static void calculate_res(int len);
+
+static void read_child_res(struct child_process *child, int len);
 
 static inline int extract_digit(uint8_t* num, int idx);
 
@@ -28,10 +34,17 @@ static void cleanup_exit(int status);
 
 static pid_t fork_setup_pipes(int in_fd[2], int out_fd[2]);
 
-static void write_pipe(int fd, char *data, int len, int do_close, FILE **f);
+static void write_pipe(int fd, char *data, int len, int do_close);
 
 int main(int argc, char **argv) {
     progname = argv[0];
+
+    if(argc > 1) {
+        usage();
+    }
+
+    memset(children, 0, sizeof(children));
+
     read_nums();
 
     multiply();
@@ -62,171 +75,73 @@ static void read_nums(void) {
 }
 
 static void multiply(void) {
-    int alen = strlen(a) - 1;
-    int blen = strlen(b) - 1;
+    int alen = strlen(a);
+    if(a[alen-1] == '\n') {
+        alen--;
+    }
+    int blen = strlen(b);
+    if(b[blen-1] == '\n') {
+        blen--;
+    }
 
     if(alen != blen) {
-        fprintf(stderr, "[%s] the two integers do not have equal length\n", progname);
+        fprintf(stderr, "[%s] the two integers do not have equal length (%u and %u)\n", progname, alen, blen);
         cleanup_exit(EXIT_FAILURE);
     }
 
     if(alen == 1) {
         int res = extract_digit((uint8_t*) a, 0) * extract_digit((uint8_t*) b, 0);
-        fprintf(stdout, "%x", res);
+        fprintf(stdout, "%x\n", res);
     } else if(alen > 1) {
         if(alen % 2 != 0) {
             fprintf(stderr, "[%s] the number of digits is not even\n", progname);
             cleanup_exit(EXIT_FAILURE);
         }
 
-        if((pipe(pipe_a_fd_in) | pipe(pipe_a_fd_out) | pipe(pipe_b_fd_in) | pipe(pipe_b_fd_out) |
-           pipe(pipe_c_fd_in) | pipe(pipe_c_fd_out) | pipe(pipe_d_fd_in) | pipe(pipe_d_fd_out)) != 0) {
-            fprintf(stderr, "[%s] the two integers do not have equal length\n", progname);
+        if((pipe(children[0].pipe_in_fd) | pipe(children[0].pipe_out_fd) | 
+            pipe(children[1].pipe_in_fd) | pipe(children[1].pipe_out_fd) |
+            pipe(children[2].pipe_in_fd) | pipe(children[2].pipe_out_fd) | 
+            pipe(children[3].pipe_in_fd) | pipe(children[3].pipe_out_fd)) != 0) {
+            fprintf(stderr, "[%s] failed to init pipes\n", progname);
             cleanup_exit(EXIT_FAILURE);
         }
 
-        pid_t pid_a, pid_b, pid_c, pid_d;
-        FILE *f;
-        pid_a = fork_setup_pipes(pipe_a_fd_in, pipe_a_fd_out);
-        write_pipe(pipe_a_fd_in[1], a, alen/2, 0, &f);
-        write_pipe(0, b, alen/2, 1, &f);
+        // Write inputs for child process
+        children[0].pid = fork_setup_pipes(children[0].pipe_in_fd, children[0].pipe_out_fd);
+        write_pipe(children[0].pipe_in_fd[1], a, alen/2, 0);
+        write_pipe(0, b, alen/2, 1);
+        children[0].pipe_in_fd[1] = -1;
 
-        pid_b = fork_setup_pipes(pipe_b_fd_in, pipe_b_fd_out);
-        write_pipe(pipe_b_fd_in[1], a, alen/2, 0, &f);
-        write_pipe(0, b + alen/2, alen/2, 1, &f);
+        children[1].pid = fork_setup_pipes(children[1].pipe_in_fd, children[1].pipe_out_fd);
+        write_pipe(children[1].pipe_in_fd[1], a, alen/2, 0);
+        write_pipe(0, b + alen/2, alen/2, 1);
+        children[1].pipe_in_fd[1] = -1;
 
-        pid_c = fork_setup_pipes(pipe_c_fd_in, pipe_c_fd_out);
-        write_pipe(pipe_c_fd_in[1], a + alen/2, alen/2, 0, &f);
-        write_pipe(0, b, alen/2, 1, &f);
+        children[2].pid = fork_setup_pipes(children[2].pipe_in_fd, children[2].pipe_out_fd);
+        write_pipe(children[2].pipe_in_fd[1], a + alen/2, alen/2, 0);
+        write_pipe(0, b, alen/2, 1);
+        children[2].pipe_in_fd[1] = -1;
 
-        pid_d = fork_setup_pipes(pipe_d_fd_in, pipe_d_fd_out);
-        write_pipe(pipe_d_fd_in[1], a + alen/2, alen/2, 0, &f);
-        write_pipe(0, b + alen/2, alen/2, 1, &f);
+        children[3].pid = fork_setup_pipes(children[3].pipe_in_fd, children[3].pipe_out_fd);
+        write_pipe(children[3].pipe_in_fd[1], a + alen/2, alen/2, 0);
+        write_pipe(0, b + alen/2, alen/2, 1);
+        children[3].pipe_in_fd[1] = -1;
 
-        // Read and combine results
-        FILE *child_out_a = fdopen(pipe_a_fd_out[0], "r");
-        if(child_out_a == NULL) {
-            fprintf(stderr, "[%s] fdopen failed: %s\n", progname, strerror(errno));
-            cleanup_exit(EXIT_FAILURE);
-        }
-        FILE *child_out_b = fdopen(pipe_b_fd_out[0], "r");
-        if(child_out_b == NULL) {
-            fprintf(stderr, "[%s] fdopen failed: %s\n", progname, strerror(errno));
-            cleanup_exit(EXIT_FAILURE);
-        }
-        FILE *child_out_c = fdopen(pipe_c_fd_out[0], "r");
-        if(child_out_c == NULL) {
-            fprintf(stderr, "[%s] fdopen failed: %s\n", progname, strerror(errno));
-            cleanup_exit(EXIT_FAILURE);
-        }
-        FILE *child_out_d = fdopen(pipe_d_fd_out[0], "r");
-        if(child_out_d == NULL) {
-            fprintf(stderr, "[%s] fdopen failed: %s\n", progname, strerror(errno));
-            cleanup_exit(EXIT_FAILURE);
+    
+        // Allocate result buffers, open child output streams and read results
+        for(int i = 0; i < 4; i++) {
+            read_child_res(&children[i], alen);
         }
 
-        // Allocate result buffers
-        unsigned char *res_a, *res_b, *res_c, *res_d, *res;
-        int res_a_len, res_b_len, res_c_len, res_d_len;
-        
-        if((res_a = malloc(alen)) == NULL) {
-            fprintf(stderr, "[%s] malloc: %s\n", progname, strerror(errno));
-            cleanup_exit(EXIT_FAILURE);
-        }
-
-        if((res_b = malloc(alen)) == NULL) {
-            fprintf(stderr, "[%s] malloc: %s\n", progname, strerror(errno));
-            cleanup_exit(EXIT_FAILURE);
-        }
-
-        if((res_c = malloc(alen)) == NULL) {
-            fprintf(stderr, "[%s] malloc: %s\n", progname, strerror(errno));
-            cleanup_exit(EXIT_FAILURE);
-        }
-
-        if((res_d = malloc(alen)) == NULL) {
-            fprintf(stderr, "[%s] malloc: %s\n", progname, strerror(errno));
-            cleanup_exit(EXIT_FAILURE);
-        }
-
-        if((res = malloc(alen)) == NULL) {
-            fprintf(stderr, "[%s] malloc: %s\n", progname, strerror(errno));
-            cleanup_exit(EXIT_FAILURE);
-        }
-        memset(res, 0, alen);
-
-        // Read child results
-        res_a_len = fread(res_a, 1, alen, child_out_a);
-        res_b_len = fread(res_b, 1, alen, child_out_b);
-        res_c_len = fread(res_c, 1, alen, child_out_c);
-        res_d_len = fread(res_d, 1, alen, child_out_d);
-
-        int i;
-        int sum = 0;
-        for(i = 0; i < 2*alen; i++) {
-            if(i < res_d_len) {
-                sum += extract_digit(res_d, res_d_len - i - 1);
-            }
-            if(i < res_b_len + alen/2 && i >= alen/2) {
-                sum += extract_digit(res_b, res_b_len - i + alen/2 - 1);
-            }
-            if(i < res_c_len + alen/2 && i >= alen/2) {
-                sum += extract_digit(res_c, res_c_len - i + alen/2 - 1);
-            }
-            if(i < res_a_len + alen && i >= alen) {
-                sum += extract_digit(res_a, res_a_len - i + alen - 1);
-            }
-
-            res[alen - i/2 - 1] |= (sum % 16) << 4*(i%2);
-            sum /= 16;
-        }
-
-        for(int j = alen - (i - 1)/2 - 1; j < alen; j++) {
-            fprintf(stdout, "%02x", res[j]);
-        }
-        fprintf(stdout, "\n");
-        fflush(stdout);
-        
-        if(fclose(child_out_a) != 0) {
-            fprintf(stderr, "[%s] fclose failed: %s\n", progname, strerror(errno));
-            cleanup_exit(EXIT_FAILURE);
-        }
-        if(fclose(child_out_b) != 0) {
-            fprintf(stderr, "[%s] fclose failed: %s\n", progname, strerror(errno));
-            cleanup_exit(EXIT_FAILURE);
-        }
-        if(fclose(child_out_c) != 0) {
-            fprintf(stderr, "[%s] fclose failed: %s\n", progname, strerror(errno));
-            cleanup_exit(EXIT_FAILURE);
-        }
-        if(fclose(child_out_d) != 0) {
-            fprintf(stderr, "[%s] fclose failed: %s\n", progname, strerror(errno));
-            cleanup_exit(EXIT_FAILURE);
-        }
+        calculate_res(alen);
 
         int status, child_err = 0;
-        waitpid(pid_a, &status, 0);
-        if(WEXITSTATUS(status) != EXIT_SUCCESS) {
-            fprintf(stderr, "[%s] child exited with status %u\n", progname, WEXITSTATUS(status));
-            child_err = 1;
-        }
-
-        waitpid(pid_b, &status, 0);
-        if(WEXITSTATUS(status) != EXIT_SUCCESS) {
-            fprintf(stderr, "[%s] child exited with status %u\n", progname, WEXITSTATUS(status));
-            child_err = 1;
-        }
-
-        waitpid(pid_c, &status, 0);
-        if(WEXITSTATUS(status) != EXIT_SUCCESS) {
-            fprintf(stderr, "[%s] child exited with status %u\n", progname, WEXITSTATUS(status));
-            child_err = 1;
-        }
-
-        waitpid(pid_d, &status, 0);
-        if(WEXITSTATUS(status) != EXIT_SUCCESS) {
-            fprintf(stderr, "[%s] child exited with status %u\n", progname, WEXITSTATUS(status));
-            child_err = 1;
+        for(int i = 0; i < 4; i++) {
+            waitpid(children[i].pid, &status, 0);
+            if(WEXITSTATUS(status) != EXIT_SUCCESS) {
+                fprintf(stderr, "[%s] child exited with status %u\n", progname, WEXITSTATUS(status));
+                child_err = 1;
+            }
         }
 
         if(child_err != 0) {
@@ -235,32 +150,106 @@ static void multiply(void) {
     }
 }
 
-static void write_pipe(int fd, char *data, int len, int do_close, FILE **f) {
+static void calculate_res(int len) {
+    unsigned char *res;
+    if((res = malloc(len)) == NULL) {
+        fprintf(stderr, "[%s] malloc failed: %s\n", progname, strerror(errno));
+        cleanup_exit(EXIT_FAILURE);
+    }
+    memset(res, 0, len);
+
+    int sum = 0, res_len = 0;
+    for(int i = 0; i < 2*len; i++) {
+        if(i < children[3].res_len) {
+            sum += extract_digit(children[3].res, children[3].res_len - i - 1);
+        }
+        if(i < children[2].res_len + len/2 && i >= len/2) {
+            sum += extract_digit(children[2].res, children[2].res_len - i + len/2 - 1);
+        }
+        if(i < children[1].res_len + len/2 && i >= len/2) {
+            sum += extract_digit(children[1].res, children[1].res_len - i + len/2 - 1);
+        }
+        if(i < children[0].res_len + len && i >= len) {
+            sum += extract_digit(children[0].res, children[0].res_len - i + len - 1);
+        }
+
+        res[len - i/2 - 1] |= (sum % 16) << 4*(i%2);
+        sum /= 16;
+        res_len = i/2;
+    }
+
+    for(int i = len - res_len - 1; i < len; i++) {
+        if(fprintf(stdout, "%02x", res[i]) != 2) {
+            fprintf(stderr, "[%s] fprintf failed: %s\n", progname, strerror(ferror(stdout)));
+        }
+    }
+    
+    if(fprintf(stdout, "\n") != 1) {
+        fprintf(stderr, "[%s] fprintf failed: %s\n", progname, strerror(ferror(stdout)));
+    }
+
+    free(res);
+    fflush(stdout);
+}
+
+static void read_child_res(struct child_process *child, int len) {
+    FILE *out = fdopen(child->pipe_out_fd[0], "r");
+    if(out == NULL) {
+        fprintf(stderr, "[%s] fdopen failed: %s\n", progname, strerror(errno));
+        cleanup_exit(EXIT_FAILURE);
+    }
+
+    if((child->res = malloc(len)) == NULL) {
+        fprintf(stderr, "[%s] malloc failed: %s\n", progname, strerror(errno));
+        fclose(out);
+        cleanup_exit(EXIT_FAILURE);
+    }
+
+    child->res_len = fread(child->res, 1, len, out);
+    if(child->res[child->res_len-1] == '\n') {
+        child->res_len--;
+    }
+
+    if(ferror(out) != 0) {
+        fprintf(stderr, "[%s] fread failed: %s\n", progname, strerror(ferror(out)));
+        fclose(out);
+        cleanup_exit(EXIT_FAILURE);
+    }
+
+    if(fclose(out) != 0) {
+        fprintf(stderr, "[%s] fclose failed: %s\n", progname, strerror(errno));
+        cleanup_exit(EXIT_FAILURE);
+    }
+    child->pipe_out_fd[0] = -1;
+}
+
+static void write_pipe(int fd, char *data, int len, int do_close) {
+    static FILE *f;
     if(fd != 0) {
-        if((*f = fdopen(fd, "w")) == NULL) {
+        if((f = fdopen(fd, "w")) == NULL) {
             fprintf(stderr, "[%s] fdopen failed: %s\n", progname, strerror(errno));
             cleanup_exit(EXIT_FAILURE);
         }
     }
 
-    if(fwrite(data, 1, len, *f) != len) {
-        fprintf(stderr, "[%s] fwrite failed: %s\n", progname, strerror(ferror(*f)));
-        fclose(*f);
+    if(fwrite(data, 1, len, f) != len) {
+        fprintf(stderr, "[%s] fwrite failed: %s\n", progname, strerror(ferror(f)));
+        fclose(f);
         cleanup_exit(EXIT_FAILURE);
     }
-    if(fwrite("\n", 1, 1, *f) != 1) {
-        fprintf(stderr, "[%s] fwrite failed: %s\n", progname, strerror(ferror(*f)));
-        fclose(*f);
+    if(fwrite("\n", 1, 1, f) != 1) {
+        fprintf(stderr, "[%s] fwrite failed: %s\n", progname, strerror(ferror(f)));
+        fclose(f);
         cleanup_exit(EXIT_FAILURE);
     }
     
     if(do_close == 1) {
-        if(fclose(*f) != 0) {
+        if(fclose(f) != 0) {
             fprintf(stderr, "[%s] fclose failed: %s\n", progname, strerror(errno));
             cleanup_exit(EXIT_FAILURE);
         }
     } else {
-        if(fflush(*f) != 0) {
+        if(fflush(f) != 0) {
             fprintf(stderr, "[%s] fflush failed: %s\n", progname, strerror(errno));
             cleanup_exit(EXIT_FAILURE);
         }
@@ -271,13 +260,15 @@ static pid_t fork_setup_pipes(int in_fd[2], int out_fd[2]) {
     pid_t pid = fork();
     switch(pid) {
     case -1:
-        fprintf(stderr, "[%s] fork failed\n", progname);
+        fprintf(stderr, "[%s] fork failed: %s\n", progname, strerror(errno));
         cleanup_exit(EXIT_FAILURE);
     case 0:
+        // Change STDIN to in_pipe
         if(close(in_fd[1]) != 0) {
             fprintf(stderr, "[%s] close failed: %s\n", progname, strerror(errno));
             cleanup_exit(EXIT_FAILURE);
         }
+        in_fd[1] = -1;
         if(dup2(in_fd[0], STDIN_FILENO) < 0) {
             fprintf(stderr, "[%s] dup2 failed: %s\n", progname, strerror(errno));
             cleanup_exit(EXIT_FAILURE);
@@ -286,11 +277,14 @@ static pid_t fork_setup_pipes(int in_fd[2], int out_fd[2]) {
             fprintf(stderr, "[%s] close failed: %s\n", progname, strerror(errno));
             cleanup_exit(EXIT_FAILURE);
         }
+        in_fd[0] = -1;
 
+        // Change STDOUT to in_pipe
         if(close(out_fd[0]) != 0) {
             fprintf(stderr, "[%s] close failed: %s\n", progname, strerror(errno));
             cleanup_exit(EXIT_FAILURE);
         }
+        out_fd[0] = -1;
         if(dup2(out_fd[1], STDOUT_FILENO) < 0) {
             fprintf(stderr, "[%s] dup2 failed: %s\n", progname, strerror(errno));
             cleanup_exit(EXIT_FAILURE);
@@ -299,6 +293,7 @@ static pid_t fork_setup_pipes(int in_fd[2], int out_fd[2]) {
             fprintf(stderr, "[%s] close failed: %s\n", progname, strerror(errno));
             cleanup_exit(EXIT_FAILURE);
         }
+        out_fd[1] = -1;
 
         execlp(progname, progname, NULL);
         fprintf(stderr, "[%s] execlp failed\n", progname);
@@ -308,6 +303,8 @@ static pid_t fork_setup_pipes(int in_fd[2], int out_fd[2]) {
             fprintf(stderr, "[%s] close failed: %s\n", progname, strerror(errno));
             cleanup_exit(EXIT_FAILURE);
         }
+        out_fd[1] = -1;
+        in_fd[0] = -1;
         break;
     }
     return pid;
@@ -323,5 +320,28 @@ static inline int extract_digit(unsigned char* num, int idx) {
 static void cleanup_exit(int status) {
     free(a);
     free(b);
+
+    for(int i = 0; i < 4; i++) {
+        free(children[i].res);
+        if(children[i].pipe_in_fd[0] != -1) {
+            close(children[i].pipe_in_fd[0]);
+        }
+        if(children[i].pipe_in_fd[1] != -1) {
+            close(children[i].pipe_in_fd[1]);
+        }
+        
+        if(children[i].pipe_out_fd[0] != -1) {
+            close(children[i].pipe_out_fd[0]);
+        }
+        if(children[i].pipe_out_fd[1] != -1) {
+            close(children[i].pipe_out_fd[1]);
+        }
+    }  
+
     exit(status);
+}
+
+static void usage(void) {
+    fprintf(stderr, "Usage: %s\n", progname);
+    exit(EXIT_FAILURE);
 }
