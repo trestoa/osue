@@ -105,12 +105,61 @@ static void multiply(void);
  */
 static void calculate_res(int len);
 
+/**
+ * @brief Reads the results of a child process to a the given child process struct.
+ * @details Reads the result of child process from the child's stdout pipe and stores 
+ * the pointer to the result buffer in the 'res' field of the given child process struct.
+ * The digit count of the result is written to the 'res_len' field. However, the result 
+ * buffer will always have a length of 'len' regardless of the actual digit count.
+ * 
+ * @param child child process struct where the result should be written to.
+ * @param len Length of the input numbers (use for determining the size of the result buffer).
+ */
 static void read_child_res(struct child_process *child, int len);
 
+/**
+ * @brief Extracts a digit from the hex string representation of a integer number.
+ * @details Reads a single hex digit from the given hex string representation of an 
+ * integer number and converts it to an integer using strtol. The resulting number 
+ * is therefore in the range from 0 to 15.
+ * 
+ * @param num Hex string representation of the number.
+ * @param idx Index of the digit which should be extracted.
+ * @return int Converted hex digit as integer.
+ */
 static inline int extract_digit(uint8_t* num, int idx);
 
+/**
+ * @brief Forks the process, changes stdin and stdout to the given fd's and exec's the 
+ * the given intmul program from the child process.
+ * @details Forks the process, changes the child's stdout and stdin to the given 
+ * out_fd and in_fd file descriptors and eventually exec's the intmul program from the
+ * child process. The read in and write out pipe ends of the parent are close. 
+ * For the parent, this function returns the child's process id.
+ * 
+ * @param in_fd Pipe for the child's stdin.
+ * @param out_fd Pipe for the child's stdout.
+ * @return pid_t child process id.
+ */
 static pid_t fork_setup_pipes(int in_fd[2], int out_fd[2]);
 
+/**
+ * @brief Writes a buffer to a file descriptor.
+ * @detais Writes 'len' bytes of buffer to a file descriptor. This functions is
+ * essentially a wrapper around fdopen, fwrite and fclose. The FILE objects is saved as
+ * a static variable within the function in order to allow subsequent calls of this function. 
+ * Writing to the previous stream can be signalled by passing 0 as the file descriptor ('fd').
+ * If a function call is the last write operation for the current stream, the 'do_close' parameter
+ * must be set to 1 so that the stream will be closed (which also causes the stream to be flushed) 
+ * correctly.
+ * 
+ * @param fd Target file descriptor.
+ * @param data Buffer to be written.
+ * @param len Number of bytes to be written to the target.
+ * @param do_close 1 indicates that there will be no further write operators to this fd 
+ * and causes the stream to be closed after the function call. A value != 1 signals that the opened 
+ * stream be kept open for the next function call. 
+ */
 static void write_pipe(int fd, char *data, int len, int do_close);
 
 /**
@@ -130,7 +179,7 @@ static void write_pipe(int fd, char *data, int len, int do_close);
 int main(int argc, char **argv) {
     progname = argv[0];
 
-    if(argc > 1) {
+    if(argc != 1) {
         usage();
     }
 
@@ -242,6 +291,8 @@ static void multiply(void) {
 }
 
 static void calculate_res(int len) {
+    // A multiplication of two numbers with n digit may only be 2*n digits long.
+    // One hex digit == 4 bit => allocate len bytes for the result
     unsigned char *res;
     if((res = malloc(len)) == NULL) {
         fprintf(stderr, "[%s] malloc failed: %s\n", progname, strerror(errno));
@@ -249,6 +300,7 @@ static void calculate_res(int len) {
     }
     memset(res, 0, len);
 
+    // Numbers are written from right to left, so start with the most right digit.
     int sum = 0, res_len = 0;
     for(int i = 0; i < 2*len; i++) {
         if(i < children[3].res_len) {
