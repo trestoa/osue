@@ -13,6 +13,7 @@ typedef struct edge {
 } edge_t;
 
 typedef struct solution_ringbuffer {
+    int term;
     int buf_elem_counts[RINGBUFFER_ELEM_COUNT];
     edge_t buf[RINGBUFFER_ELEM_COUNT][MAX_SOLUTION_SIZE];
     int write_pos;

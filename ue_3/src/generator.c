@@ -5,7 +5,6 @@
 #include <string.h>
 #include <limits.h>
 #include <stdint.h>
-#include <time.h>
 #include <fcntl.h>
 #include <sys/mman.h> 
 #include <semaphore.h>
@@ -22,9 +21,9 @@ static int vertex_count;
 static int edge_count;
 static edge_t *edges;
 
-static sem_t *used_sem, *free_sem, *write_sem;
+static sem_t *used_sem = NULL, *free_sem = NULL, *write_sem = NULL;
 
-static solution_ringbuffer_t *solution_buf;
+static solution_ringbuffer_t *solution_buf = NULL;
 
 /**
  * Print usage. 
@@ -36,17 +35,7 @@ static solution_ringbuffer_t *solution_buf;
  */
 static void usage(void);
 
-/**
- * Cleanup and terminate.
- * @brief Close open files and terminate program with the given status code.
- * 
- * @param status Returns status of the program.
- * 
- * @details Closes open files (file pointers != NULL) and exits the program with 
- * exit(), returning the given status.
- * Global variables: outfile, file1, file2.
- */
-void cleanup_exit(int status);
+static void cleanup_exit(int status);
 
 static void read_edges(int argc, char **argv);
 
@@ -57,7 +46,7 @@ static void open_ringbuffer();
 static void write_solution(edge_t *solution, int len);
 
 int main(int argc, char **argv) {
-    srand(time(NULL));
+    srand(getpid());
     progname = argv[0];
 
     if(argc < 2) {
@@ -87,14 +76,13 @@ int main(int argc, char **argv) {
             continue;
         }
 
-        for(int i = 0; i < solution_len; i++) {
-            printf(" %u-%u", solution[i].node_1, solution[i].node_2);
+        if(solution_buf->term) {
+            break;
         }
-        puts("\n");
 
         write_solution(solution, solution_len);
     }
-    printf("solution size: %u", solution_len);
+    cleanup_exit(EXIT_SUCCESS);
 }
 
 static void read_edges(int argc, char **argv) {
@@ -160,37 +148,71 @@ static int find_solution(edge_t *solution) {
 static void open_ringbuffer() {
     int shmfd = shm_open(RES_PREFIX, O_RDWR, 0);
      if(shmfd == -1) {
-        fprintf(stderr, "[%s] shm_open failed: %s\n", progname, strerror(errno));
-        close(shmfd);
-        exit(EXIT_FAILURE);
+        if(errno == ENOENT) {
+            fprintf(stderr, "[%s] Shared memory not found. Maybe there is no supervisor running?\n", progname);    
+        } else {
+            fprintf(stderr, "[%s] shm_open failed: %s\n", progname, strerror(errno));
+        }
+        cleanup_exit(EXIT_FAILURE);
     }
 
     solution_buf = mmap(NULL, sizeof(*solution_buf), PROT_READ | PROT_WRITE, MAP_SHARED, shmfd, 0);
     if(solution_buf == MAP_FAILED) {
         fprintf(stderr, "[%s] mmap failed: %s\n", progname, strerror(errno));
         close(shmfd);
-        exit(EXIT_FAILURE);
+        cleanup_exit(EXIT_FAILURE);
     }
 
-    close(shmfd);
+    if(close(shmfd) < 0) {
+        fprintf(stderr, "[%s] close failed: %s\n", progname, strerror(errno));
+        cleanup_exit(EXIT_FAILURE);
+    }
 
     // Open semaphores
-    used_sem = sem_open(RES_PREFIX "_used", 0);
-    free_sem = sem_open(RES_PREFIX "_free", 0);
-    write_sem = sem_open(RES_PREFIX "_write", O_CREAT, 0600, 1);
+    if((used_sem = sem_open(RES_PREFIX "_used", O_CREAT, 0600, 0)) == SEM_FAILED) {
+        fprintf(stderr, "[%s] sem_open failed: %s\n", progname, strerror(errno));
+        cleanup_exit(EXIT_FAILURE);
+    }
+    if((free_sem = sem_open(RES_PREFIX "_free", O_CREAT, 0600, RINGBUFFER_ELEM_COUNT-1)) == SEM_FAILED) {
+        fprintf(stderr, "[%s] sem_open failed: %s\n", progname, strerror(errno));
+        cleanup_exit(EXIT_FAILURE);
+    }
+    if((write_sem = sem_open(RES_PREFIX "_write", O_CREAT, 0600, 1)) == SEM_FAILED) {
+        fprintf(stderr, "[%s] sem_open failed: %s\n", progname, strerror(errno));
+        cleanup_exit(EXIT_FAILURE);
+    }
 }
 
 static void write_solution(edge_t *solution, int len) {
-    printf("writing to pos: %u\n", solution_buf->write_pos);
-    sem_wait(free_sem);
-    sem_wait(write_sem);
+    if(sem_wait(free_sem) < 0) {
+        if(errno == EINTR) {
+            return;
+        }
+
+        fprintf(stderr, "[%s] sem_wait failed: %s\n", progname, strerror(errno)); 
+        cleanup_exit(EXIT_FAILURE);
+    }
+    if(sem_wait(write_sem) < 0) {
+        if(errno == EINTR) {
+            return;
+        }
+
+        fprintf(stderr, "[%s] sem_wait failed: %s\n", progname, strerror(errno)); 
+        cleanup_exit(EXIT_FAILURE);
+    }
     
-    memcpy(&(solution_buf->buf) + solution_buf->write_pos, solution, MAX_SOLUTION_SIZE);
+    memcpy(solution_buf->buf[solution_buf->write_pos], solution, sizeof(*solution) * MAX_SOLUTION_SIZE);
     solution_buf->buf_elem_counts[solution_buf->write_pos] = len;
     
     solution_buf->write_pos = (solution_buf->write_pos + 1) % RINGBUFFER_ELEM_COUNT;
-    sem_post(write_sem);
-    sem_post(used_sem);
+    if(sem_post(write_sem) < 0) {
+        fprintf(stderr, "[%s] sem_post failed: %s\n", progname, strerror(errno)); 
+        cleanup_exit(EXIT_FAILURE);
+    }
+    if(sem_post(used_sem) < 0) {
+        fprintf(stderr, "[%s] sem_post failed: %s\n", progname, strerror(errno)); 
+        cleanup_exit(EXIT_FAILURE);
+    }
 }
 
 static void usage(void) {
@@ -198,7 +220,21 @@ static void usage(void) {
     exit(EXIT_FAILURE);
 }
 
-void cleanup_exit(int status) {
+static void cleanup_exit(int status) {
     free(edges);
+
+    if(solution_buf != NULL) {
+        munmap(solution_buf, sizeof(*solution_buf));
+    }
+    if(used_sem != NULL) {
+        sem_close(used_sem);
+    }
+    if(free_sem != NULL) {
+        sem_close(free_sem);
+    }
+    if(write_sem != NULL) {
+        sem_close(write_sem);
+    }
+
     exit(status);
 }
