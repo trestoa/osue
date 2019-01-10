@@ -1,3 +1,14 @@
+/**
+ * @file supervisor.c
+ * @author Markus Klein (e11707252@student.tuwien.ac.at)
+ * @brief Implementaion of the supervisor program for exercise 3.
+ * @version 1.0
+ * @date 2019-01-10
+ * @details The supervisor collects the solutions from the generator processes
+ * and keeps track of the best solution. Whenever a new, better solution was found
+ * it will be written to stdout. 
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/errno.h>
@@ -14,32 +25,109 @@
 
 /**
  * @brief Program name.
- * @details Name of the executable used for usage and error messages.
+ * @details Name of the executable used for usage and messages.
  */
 static char *progname;
 
-static sem_t *used_sem, *free_sem, *write_sem;
+/**
+ * @brief Semaphore of the number of solutions currently in the solution buffer.
+ * @details Points to a named semaphore which indicates the number of solutions currently 
+ * stored in the solution circular buffer. It is used by the generators to notify the 
+ * supervisor that a new solution was added and can be read from the solution buffer.
+ */
+static sem_t *used_sem = NULL;
 
+/**
+ * @brief Semaphore of the number of free spaces currently in the solution buffer.
+ * @details Points to a named semaphore which indicates the number of free solution spaces
+ * available in the solution circular buffer. It is used by the supervisor to notify the
+ * generators that a new solution can be written to the solution buffer.
+ */
+static sem_t *free_sem = NULL;
+
+/**
+ * @brief Semaphore for synchronization of concurrent writes to the solution buffer.
+ * @details This semaphore ensures mutual exclusion for concurrent writes to the solution
+ * buffer by multiple generators. 
+ */
+static sem_t *write_sem = NULL;
+
+/**
+ * @brief Shared memory where solutions are written to by the generators.
+ * @details This shared memory object serves as communication interface between the 
+ * generators and the supervisors. As demanded in the exercise description, the solution
+ * storage is implemented as a circular buffer. 
+ */
 static solution_ringbuffer_t *solution_buf;
 
 /**
  * Print usage. 
- * @brief Prints synopsis of the mydiff program.
+ * @brief Prints synopsis of the supervisor program.
  * 
- * @details Prints the usage message of the programm mydiff on sterr and terminates 
+ * @details Prints the usage message of the programm supervisor on sterr and terminates 
  * the program with EXIT_FAILURE.
  * Global variables: progname.
  */
 static void usage(void);
 
+/**
+ * Cleanup and terminate.
+ * @brief Free allocated memory, unmap and unlink shared memory, close and unlink semaphores,
+ * notify the generators of the termination and terminate the program with the given status code.
+ * 
+ * @param status Returns status of the program.
+ * 
+ * @details Frees allocated memory, notifies the generators of the termination be setting the 
+ * term flag, unmaps and unlinks the shared memory, closes and unlinks open semaphores and 
+ * exits the program using exit(), returning the given status.
+ * Global variables: edges, used_sem, free_sem, write_sem, solution_buf.
+ */
 static void cleanup_exit(int status);
 
+/**
+ * @brief Signal handler for SIGINT and SIGTERM.
+ * 
+ * @param signal Caught signal.
+ * 
+ * @details Signal handler. Initiates the termination of the program by setting
+ * the term flag in the shared memory. The supervisor will finish processing the current
+ * solution and terminate afterwards.
+ * Global variables: solution_buf.
+ */
 static void handle_signal(int signal);
 
+/**
+ * @brief Creates and opens the solution ringbuffer.
+ * @details Creates the shared memory used for communication with the supervisor
+ * and maps to solution_buf. The function also creates all semaphores used for 
+ * synchronization between the different components of the program. 
+ * Global variables: solution_buf, used_sem, free_sem, write_sem.
+ */
 static void setup_ringbuffer();
 
+/**
+ * @brief Read a solution from the solution ringbuffer.
+ * 
+ * @param solution Pointer where the address of the solution array should be stored.
+ * @return int Size of the solution.
+ * 
+ * @details Reads a solution from the solution buffer and stores the address to the 
+ * solution in the given pointer. Blocks and waits for the next solution if non is
+ * available.
+ */
 static int read_solution(edge_t **solution);
 
+/**
+ * @brief Main method of the supervisor program. 
+ * 
+ * @param argc Argument counter.
+ * @param argv Argument vector.
+ * @return int Program exit code (EXIT_SUCCESS)
+ * 
+ * @details Parses the command line arguments, creates the solution ringbuffer and
+ * reading solutions until either a SIGINT or SIGTERM is caught or one of the
+ * generators finds a solution where 0 edges need to be removed.
+ */
 int main(int argc, char **argv) {
     progname = argv[0];
 
