@@ -1,6 +1,6 @@
 #
 # Exercise 3
-# Program: 
+# Program: 3-coloring
 # Author: Markus Klein (e11707252@student.tuwien.ac.at)
 #
 CC = gcc
@@ -23,10 +23,10 @@ SUPERVISOR_OBJECTS = $(COMMON_OBJECTS) supervisor.o
 all: generator supervisor
 
 generator: $(GENERATOR_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^
+	$(CC) -o $@ $^ $(LDFLAGS)
 
 supervisor: $(SUPERVISOR_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^
+	$(CC) -o $@ $^ $(LDFLAGS)
 
 %.o: $(SRC_PATH)/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
