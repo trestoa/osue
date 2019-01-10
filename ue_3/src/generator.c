@@ -99,18 +99,72 @@ static void usage(void);
  * 
  * @details Frees allocated memory, unmaps the shared memory, closes open semaphores 
  * and exits the program using exit(), returning the given status.
- * Global variables: edges, used_sem, free_sem, write_sem.
+ * Global variables: edges, used_sem, free_sem, write_sem, solution_buf.
  */
 static void cleanup_exit(int status);
 
+/**
+ * @brief Parse the command line arguments.
+ * 
+ * @param argc Argument counter.
+ * @param argv Argument vector.
+ * 
+ * @details Parses each positional command line argument into a edge_t object
+ * and stores the list of edges in the edges variable. Also, the vertex_count 
+ * and edge_cound variables are set accordingly. 
+ * Global variables: vertex_count, edges.
+ */
 static void read_edges(int argc, char **argv);
 
+/**
+ * @brief Calculate a random solution.
+ * 
+ * @param solution Pointer to an solution array which can hold MAX_SOLUTION_SIZE 
+ * edge objects. The solution will be written to this array. 
+ * @return int Solution size / number of edges to be remove from the graph in 
+ * order to be 3-colorable. 
+ * 
+ * @details Implements a randomized algorithm which finds a valid solution for 
+ * the 3-coloring problem by assigning a random color to each vertex and removing
+ * all edges (u, v) with color(u) == color(v). The function will discard all 
+ * solutions where more than MAX_SOLUTION_SIZE edges need to be remove. In this case,
+ * the function will return MAX_SOLUTION_SIZE and the solution buffer will contain
+ * the first MAX_SOLUTION_SIZE edges to be remove. 
+ * Global variables: vertex_count, edge_count, edges.
+ */
 static int find_solution(edge_t *solution);
 
+/**
+ * @brief Opens the solution ringbuffer.
+ * @details Opens the shared memory used for communication with the supervisor
+ * and maps to solution_buf. The function also opens all semaphores used for 
+ * synchronization between the different components of the program. 
+ * Global variables: solution_buf, used_sem, free_sem, write_sem.
+ */
 static void open_ringbuffer();
 
+/**
+ * @brief Write a solution to the solution ringbuffer.
+ * 
+ * @param solution Solution to be written.
+ * @param len Number of edges which need to be remove for this solution.
+ * 
+ * @details Writes the given solution array to the next free space into the 
+ * solution ringbuffer. Blocks and waits for a free space if none is available.
+ */
 static void write_solution(edge_t *solution, int len);
 
+/**
+ * @brief Main method of the generator program. 
+ * 
+ * @param argc Argument counter.
+ * @param argv Argument vector.
+ * @return int Program exit code (EXIT_SUCCESS)
+ * 
+ * @details Sets the seed for rand(), parses the command line arguments,
+ * opens the solution ringbuffer and starts continously generating random 
+ * solutions which are written to the solution buffer.
+ */
 int main(int argc, char **argv) {
     srand(getpid());
     progname = argv[0];
