@@ -6,7 +6,7 @@
 #define MAX_SOLUTION_SIZE 8
 
 #define RES_PREFIX "11707252"
-#define RINGBUFFER_ELEM_COUNT 100
+#define RINGBUFFER_ELEM_COUNT 56
 
 typedef struct edge {
     int node_1, node_2;

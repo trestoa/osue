@@ -18,7 +18,7 @@
  */
 static char *progname;
 
-static sem_t *used_sem, *free_sem;
+static sem_t *used_sem, *free_sem, *write_sem;
 
 static solution_ringbuffer_t *solution_buf;
 
@@ -122,6 +122,10 @@ static void setup_ringbuffer() {
         fprintf(stderr, "[%s] sem_open failed: %s\n", progname, strerror(errno));
         cleanup_exit(EXIT_FAILURE);
     }
+    if((write_sem = sem_open(RES_PREFIX "_write", O_CREAT, 0600, 1)) == SEM_FAILED) {
+        fprintf(stderr, "[%s] sem_open failed: %s\n", progname, strerror(errno));
+        cleanup_exit(EXIT_FAILURE);
+    }
 }
 
 static int read_solution(edge_t **solution) {
@@ -139,6 +143,7 @@ static int read_solution(edge_t **solution) {
         fprintf(stderr, "[%s] sem_post failed: %s\n", progname, strerror(errno)); 
         cleanup_exit(EXIT_FAILURE);
     }
+
     int len = solution_buf->buf_elem_counts[read_pos];
     read_pos = (read_pos + 1) % RINGBUFFER_ELEM_COUNT;
     return len;
@@ -161,11 +166,22 @@ static void cleanup_exit(int status) {
         fprintf(stderr, "[%s] shm_unlink failed: %s\n", progname, strerror(errno));
     }
 
+    // post free and write semaphores in order to unblock generators
+    if(sem_post(free_sem)) {
+        fprintf(stderr, "[%s] sem_post failed: %s\n", progname, strerror(errno));
+    }
+    if(sem_post(write_sem)) {
+        fprintf(stderr, "[%s] sem_post failed: %s\n", progname, strerror(errno));
+    }
+
     if(used_sem != NULL) {
         sem_close(used_sem);
     }
     if(free_sem != NULL) {
         sem_close(free_sem);
+    }
+    if(write_sem != NULL) {
+        sem_close(write_sem);
     }
     if(sem_unlink(RES_PREFIX "_used") < 0) {
         fprintf(stderr, "[%s] sem_unlink failed: %s\n", progname, strerror(errno));
