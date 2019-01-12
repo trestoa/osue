@@ -19,6 +19,7 @@
 #include <fcntl.h>
 #include <sys/mman.h> 
 #include <semaphore.h>
+#include <signal.h>
 
 #include "common.h"
 
@@ -27,6 +28,12 @@
  * @details Name of the executable used for usage and messages.
  */
 static char *progname;
+
+/**
+ * @brief Termination flag.
+ * @details Indicates that the program should be terminated.
+ */
+static int term = 0;
 
 /**
  * @brief Number of vertices in the given graph.
@@ -47,7 +54,6 @@ static int edge_count;
  * the parsed graph definition.
  */
 static edge_t *edges;
-
 
 /**
  * @brief Semaphore of the number of solutions currently in the solution buffer.
@@ -144,6 +150,17 @@ static int find_solution(edge_t *solution);
 static void open_ringbuffer();
 
 /**
+ * @brief Signal handler for SIGINT and SIGTERM.
+ * 
+ * @param signal Caught signal.
+ * 
+ * @details Signal handler. Initiates the termination of the generator by setting
+ * the term flag. 
+ * Global variables: term.
+ */
+static void handle_signal(int signal);
+
+/**
  * @brief Write a solution to the solution ringbuffer.
  * 
  * @param solution Solution to be written.
@@ -173,6 +190,13 @@ int main(int argc, char **argv) {
         usage();
     }
 
+    // Setup shutdown handler
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = handle_signal;
+    sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
+
     argc--;
     argv++;
 
@@ -196,13 +220,17 @@ int main(int argc, char **argv) {
             continue;
         }
 
-        if(solution_buf->term) {
+        if(solution_buf->term == 1 || term == 1) {
             break;
         }
 
         write_solution(solution, solution_len);
     }
     cleanup_exit(EXIT_SUCCESS);
+}
+
+static void handle_signal(int signal) { 
+    term = 1;
 }
 
 static void read_edges(int argc, char **argv) {
