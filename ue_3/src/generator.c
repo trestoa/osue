@@ -351,13 +351,24 @@ static void write_solution(edge_t *solution, int len) {
 
     // Only write solution of the supervisor has not terminated jet. 
     // Otherwise, just post the semophores. 
-    if(solution_buf->term == 0) {
-        memcpy(solution_buf->buf[solution_buf->write_pos], solution, sizeof(*solution) * MAX_SOLUTION_SIZE);
-        solution_buf->buf_elem_counts[solution_buf->write_pos] = len;
-        
-        solution_buf->write_pos = (solution_buf->write_pos + 1) % RINGBUFFER_ELEM_COUNT;
+    if(solution_buf->term == 1) {
+        // unblock the next generator
+        if(sem_post(write_sem) < 0) {
+            fprintf(stderr, "[%s] sem_post failed: %s\n", progname, strerror(errno)); 
+            cleanup_exit(EXIT_FAILURE);
+        }
+        if(sem_post(free_sem) < 0) {
+            fprintf(stderr, "[%s] sem_post failed: %s\n", progname, strerror(errno)); 
+            cleanup_exit(EXIT_FAILURE);
+        }
+        return;
     }
+
+    memcpy(solution_buf->buf[solution_buf->write_pos], solution, sizeof(*solution) * MAX_SOLUTION_SIZE);
+    solution_buf->buf_elem_counts[solution_buf->write_pos] = len;
     
+    solution_buf->write_pos = (solution_buf->write_pos + 1) % RINGBUFFER_ELEM_COUNT;
+
     if(sem_post(write_sem) < 0) {
         fprintf(stderr, "[%s] sem_post failed: %s\n", progname, strerror(errno)); 
         cleanup_exit(EXIT_FAILURE);

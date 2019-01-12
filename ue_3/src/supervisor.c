@@ -255,10 +255,10 @@ static void cleanup_exit(int status) {
     }
 
     // post free and write semaphores in order to unblock generators
-    if(sem_post(free_sem)) {
+    if(sem_post(free_sem) < 0) {
         fprintf(stderr, "[%s] sem_post failed: %s\n", progname, strerror(errno));
     }
-    if(sem_post(write_sem)) {
+    if(sem_post(write_sem) < 0) {
         fprintf(stderr, "[%s] sem_post failed: %s\n", progname, strerror(errno));
     }
 
